@@ -1,0 +1,27 @@
+[package]
+name = "freezr-daemon"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation.workspace = true
+rust-version.workspace = true
+description = "System daemon for FreezR - prevents system freezes by managing runaway processes"
+
+[dependencies]
+freezr-core = { path = "../freezr-core" }
+tokio = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+clap = { workspace = true }
+config = { workspace = true }
+nix = { workspace = true }
+
+[[bin]]
+name = "freezr-daemon"
+path = "src/main.rs"

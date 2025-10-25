@@ -1,0 +1,28 @@
+[package]
+name = "freezr-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation.workspace = true
+rust-version.workspace = true
+description = "Command-line interface for FreezR"
+
+[dependencies]
+freezr-core = { path = "../freezr-core" }
+tokio = { workspace = true }
+clap = { workspace = true }
+clap_complete = { workspace = true }
+anyhow = { workspace = true }
+colored = { workspace = true }
+indicatif = { workspace = true }
+console = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+humantime = { workspace = true }
+byte-unit = { workspace = true }
+
+[[bin]]
+name = "freezr"
+path = "src/main.rs"

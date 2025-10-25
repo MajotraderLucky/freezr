@@ -1,0 +1,71 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# FreezR specific
+config/local.toml
+*.db
+*.sqlite
+*.sqlite3
+
+# Test artifacts
+test-output/
+tmp/
+temp/
+
+# Coverage
+coverage/
+*.profraw
+*.profdata
+tarpaulin-report.html
+
+# Documentation build
+target/doc/
+book/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Build artifacts
+*.deb
+*.rpm
+*.tar.gz
+*.zip
+
+# Python (for ML scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+
+# Node (for web dashboard)
+node_modules/
+dist/
+.next/
+out/
+
+# Cache
+.cache/

@@ -1,0 +1,23 @@
+[package]
+name = "freezr-gui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation.workspace = true
+rust-version.workspace = true
+description = "Graphical user interface for FreezR"
+publish = false  # Not ready for publishing yet
+
+[dependencies]
+freezr-core = { path = "../freezr-core" }
+# GUI dependencies will be added in Phase 3
+# Uncomment when implementing:
+# iced = { workspace = true }
+# OR
+# egui = { workspace = true }
+
+[[bin]]
+name = "freezr-gui"
+path = "src/main.rs"

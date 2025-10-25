@@ -1,0 +1,38 @@
+[package]
+name = "freezr-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
+description = "Core library for FreezR - intelligent system resource guardian"
+
+[dependencies]
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+procfs = { workspace = true }
+sysinfo = { workspace = true }
+nix = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+criterion = "0.5"
+
+[[bench]]
+name = "process_scanner"
+harness = false
+
+[lib]
+name = "freezr_core"
+path = "src/lib.rs"
