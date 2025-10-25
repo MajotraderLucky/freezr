@@ -61,8 +61,12 @@ impl ProcessScanner {
         let stdout = String::from_utf8_lossy(&output.stdout);
 
         for line in stdout.lines() {
-            if line.contains("/opt/kaspersky/kesl/libexec/kesl") && !line.contains("grep") {
-                // Парсим PID (второе поле в ps aux)
+            // Find main KESL process, not wdserver or kesl-starter
+            if line.contains("/opt/kaspersky/kesl/libexec/kesl")
+                && !line.contains("grep")
+                && !line.contains("wdserver")
+                && !line.contains("kesl-starter") {
+                // Parse PID (second field in ps aux)
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() > 1 {
                     if let Ok(pid) = parts[1].parse::<u32>() {
