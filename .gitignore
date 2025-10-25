@@ -19,6 +19,7 @@ logs/
 
 # FreezR specific
 config/local.toml
+freezr.toml
 *.db
 *.sqlite
 *.sqlite3

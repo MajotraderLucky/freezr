@@ -1,0 +1,56 @@
+# FreezR Configuration Example
+#
+# This configuration matches the behavior of kesl_auto_limit.sh
+# Place this file at /etc/freezr/config.toml or specify path with --config flag
+
+[kesl]
+# CPU threshold in percent (matches CPUQuota=30%)
+cpu_threshold = 30.0
+
+# Memory threshold in MB (warning level, above hard limit of 512MB)
+memory_threshold_mb = 600
+
+# Maximum violations before automatic service restart
+max_violations = 3
+
+# Systemd service name to manage
+service_name = "kesl"
+
+# Enable KESL monitoring
+enabled = true
+
+[node]
+# CPU threshold for Node.js processes (80%+ indicates hung process)
+cpu_threshold = 80.0
+
+# Enable Node.js process monitoring
+enabled = true
+
+# Automatically kill high-CPU Node.js processes
+auto_kill = true
+
+# Require confirmation before killing (only in interactive mode)
+confirm_kill = false
+
+[logging]
+# Log directory path (relative to executable or absolute)
+log_dir = "./logs"
+
+# Individual log file names
+kesl_log = "kesl-monitor.log"
+node_log = "node-monitor.log"
+actions_log = "actions.log"
+
+# Maximum log file size in MB before rotation
+max_file_size_mb = 10
+
+# Number of rotated log files to keep
+rotate_count = 5
+
+[monitoring]
+# Check interval in seconds (how often to scan processes)
+check_interval_secs = 3
+
+# Minimum interval between service restarts in seconds
+# Prevents restart loops
+min_restart_interval_secs = 100
