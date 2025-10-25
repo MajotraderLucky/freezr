@@ -57,6 +57,7 @@ config = "0.14"
 chrono = { version = "0.4", features = ["serde"] }
 humantime = "2.1"
 byte-unit = "5.1"
+regex = "1.10"
 
 # Optional: ML features
 #candle-core = { version = "0.3", optional = true }

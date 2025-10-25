@@ -20,6 +20,7 @@ FreezR is a high-performance system daemon written in Rust that monitors CPU, me
 - 🔥 **Thermal monitoring** - prevent CPU throttling and damage
 - 📊 **Machine Learning predictions** - anticipate problems before they occur
 - 🎨 **Zero-overhead** - <0.5% CPU usage, ~3MB memory footprint
+- 📈 **Advanced Statistics** - NEW: Extended monitoring with detailed reports ([process-monitor](#-process-monitor---advanced-statistics))
 
 ### Process Management Strategies
 1. **Graceful Freeze** - SIGSTOP temporarily pauses aggressive processes
@@ -170,6 +171,63 @@ freezr stats --last 1h
 freezr export --format json --output report.json
 ```
 
+## 📊 Process Monitor - Advanced Statistics
+
+**NEW:** `process-monitor` binary with production-grade monitoring and comprehensive statistics tracking.
+
+### Features
+
+- ✅ **Pre-flight System Checks** - Validates directories, disk space, kills old instances
+- ✅ **Extended Statistics** - Violation rates, runtime tracking, trend analysis
+- ✅ **Periodic Reporting** - Automated detailed reports at configurable intervals
+- ✅ **System Health Monitoring** - Load average, memory usage snapshots
+- ✅ **Professional Logging** - Daily rotation, startup banner, structured logs
+
+### Quick Start
+
+```bash
+# Build
+cargo build --release --bin process-monitor
+
+# Standard monitoring
+./target/release/process-monitor
+
+# Extended statistics (recommended for production)
+./target/release/process-monitor --stats --report-interval 60
+```
+
+### Example Statistics Report
+
+```
+╔═══════════════════════════════════════════════════════════╗
+║                 PROCESS MONITOR STATISTICS                ║
+╚═══════════════════════════════════════════════════════════╝
+📈 Runtime: 2h 15m 30s
+📊 Total checks: 2710
+⚠️  Violations: CPU=15, Memory=3 (current session: CPU=2, Memory=0)
+🔄 Restarts: 5
+🔪 Kills: 12
+📉 Violation rate: 0.66%
+💚 System health: Load: 1.23, Memory: 45.3% used
+```
+
+### Shell Aliases
+
+```bash
+# Add to ~/.bashrc
+alias procmonR='cd /path/to/freezr && ./target/release/process-monitor'
+alias procmonStatsR='cd /path/to/freezr && ./target/release/process-monitor --stats --report-interval 60'
+alias procmonLogsR='tail -f /path/to/freezr/logs/process_monitor.log.$(date +%Y-%m-%d)'
+```
+
+### Documentation
+
+- 📖 **[Process Monitor Guide](docs/PROCESS_MONITOR_GUIDE.md)** - Complete documentation
+- 📋 **[Usage Examples](docs/examples/PROCESS_MONITOR_EXAMPLES.md)** - Real-world scenarios
+- 📊 **[Quick Summary](PROCESS_MONITOR_SUMMARY.md)** - Overview and comparison
+
+---
+
 ## 🏗️ Architecture
 
 FreezR is built as a modular Rust workspace:
@@ -178,12 +236,15 @@ FreezR is built as a modular Rust workspace:
 freezr/
 ├── crates/
 │   ├── freezr-core/      # Core monitoring & process management logic
-│   ├── freezr-daemon/    # Background service (systemd integration)
+│   ├── freezr-daemon/    # Background service + advanced binaries
+│   │   ├── freezr-daemon      # Standard daemon
+│   │   └── process-monitor    # Advanced monitoring with statistics
 │   ├── freezr-cli/       # Command-line interface
 │   └── freezr-gui/       # Desktop GUI (egui/iced)
 ├── docs/
-│   ├── architecture/     # Technical design docs
-│   └── user-guide/       # End-user documentation
+│   ├── development/      # ARCHITECTURE, ROADMAP, CONTRIBUTING
+│   ├── examples/         # PROCESS_MONITOR_EXAMPLES
+│   └── *.md              # PROCESS_MONITOR_GUIDE
 └── config/
     └── examples/         # Sample configurations
 ```

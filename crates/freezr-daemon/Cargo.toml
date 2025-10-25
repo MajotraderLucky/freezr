@@ -21,6 +21,8 @@ tracing-appender = { workspace = true }
 clap = { workspace = true }
 config = { workspace = true }
 nix = { workspace = true }
+chrono = { workspace = true }
+regex = { workspace = true }
 
 [lib]
 name = "freezr_daemon"
@@ -29,3 +31,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "freezr-daemon"
 path = "src/main.rs"
+
+[[bin]]
+name = "process-monitor"
+path = "src/bin/process_monitor.rs"

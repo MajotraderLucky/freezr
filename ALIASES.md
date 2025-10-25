@@ -2,6 +2,102 @@
 
 Convenient shell aliases for FreezR (Rust version).
 
+## 🆕 Advanced Process Monitor
+
+**NEW:** `process-monitor` - Production-ready monitoring with extended statistics
+
+### `procmonR` - Standard Monitoring
+**Advanced monitoring with comprehensive statistics**
+
+```bash
+procmonR
+```
+
+**What it does:**
+- Pre-flight system checks (directories, disk space, old instances)
+- Monitors KESL and Node.js processes
+- Continuous logging to daily rotated files
+- Clean startup banner with configuration display
+- System health tracking (load, memory)
+
+**Use when:**
+- Production monitoring required
+- Need detailed startup validation
+- Want professional logging infrastructure
+
+**Output example:**
+```
+╔═══════════════════════════════════════════════════════════╗
+║          FreezR Process Monitor v0.1.0                    ║
+╚═══════════════════════════════════════════════════════════╝
+
+📊 Monitoring Configuration:
+   └─ KESL: CPU 30.0%, Memory 600MB (max 3 violations)
+   └─ Node.js: CPU 80.0%, Auto-kill: true
+   └─ Check interval: 3s
+
+Stats: checks=1, violations=0/0, restarts=0, kills=0
+```
+
+---
+
+### `procmonStatsR` - Extended Statistics Mode
+**Periodic detailed reports with metrics**
+
+```bash
+procmonStatsR
+```
+
+**What it does:**
+- All features from standard mode
+- **PLUS** detailed statistics report every 60 seconds
+- Violation rate calculations
+- Runtime tracking
+- System health snapshots
+
+**Use when:**
+- Production environment
+- Need trend analysis
+- Want periodic status reports
+- Monitoring system health
+
+**Report example:**
+```
+╔═══════════════════════════════════════════════════════════╗
+║                 PROCESS MONITOR STATISTICS                ║
+╚═══════════════════════════════════════════════════════════╝
+📈 Runtime: 2h 15m 30s
+📊 Total checks: 2710
+⚠️  Violations: CPU=15, Memory=3 (current session: CPU=2, Memory=0)
+🔄 Restarts: 5
+🔪 Kills: 12
+📉 Violation rate: 0.66%
+💚 System health: Load: 1.23, Memory: 45.3% used
+```
+
+---
+
+### `procmonLogsR` - View Monitor Logs
+**Real-time log viewing**
+
+```bash
+procmonLogsR
+```
+
+**What it does:**
+- Opens today's process-monitor log
+- Follows logs in real-time (tail -f)
+- Shows all monitor activity with timestamps
+
+**Use when:**
+- Debugging monitoring issues
+- Checking startup validation
+- Reviewing violation history
+
+**Stop with:** `Ctrl+C`
+
+---
+
 ## Available Aliases
 
 ### `keslwatchR`
@@ -316,6 +412,11 @@ alias keslwatchR='cd /home/ryazanov/.myBashScripts/freezr && ./target/release/fr
 alias keslmonR='cd /home/ryazanov/.myBashScripts/freezr && ./target/release/freezr-daemon --config config/examples/config.toml monitor'
 alias keslrestartR='cd /home/ryazanov/.myBashScripts/freezr && sudo ./target/release/freezr-daemon --config config/examples/config.toml force-restart'
 alias kesllogR='tail -f /home/ryazanov/.myBashScripts/freezr/logs/freezr-daemon.log.$(date +%Y-%m-%d)'
+
+# FreezR Process Monitor (Advanced with Statistics)
+alias procmonR='cd /home/ryazanov/.myBashScripts/freezr && ./target/release/process-monitor --config freezr.toml'
+alias procmonStatsR='cd /home/ryazanov/.myBashScripts/freezr && ./target/release/process-monitor --config freezr.toml --stats --report-interval 60'
+alias procmonLogsR='tail -f /home/ryazanov/.myBashScripts/freezr/logs/process_monitor.log.$(date +%Y-%m-%d)'
 ```
 
 ## See Also
