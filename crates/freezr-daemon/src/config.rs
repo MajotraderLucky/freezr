@@ -13,6 +13,9 @@ pub struct Config {
     /// Snap/snapd monitoring configuration
     pub snap: SnapConfig,
 
+    /// Firefox monitoring configuration
+    pub firefox: FirefoxConfig,
+
     /// Logging configuration
     pub logging: LogConfig,
 
@@ -85,6 +88,29 @@ pub struct SnapConfig {
     pub max_violations: u32,
 }
 
+/// Firefox process monitoring configuration
+/// Two-tier strategy: freeze at high load, kill at critical
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FirefoxConfig {
+    /// CPU threshold for freezing (default: 80.0%)
+    pub cpu_threshold_freeze: f64,
+
+    /// CPU threshold for killing (default: 95.0%)
+    pub cpu_threshold_kill: f64,
+
+    /// Enable Firefox monitoring (default: true)
+    pub enabled: bool,
+
+    /// Freeze duration in seconds (default: 5)
+    pub freeze_duration_secs: u64,
+
+    /// Maximum violations before freezing (default: 2)
+    pub max_violations_freeze: u32,
+
+    /// Maximum violations before killing (default: 3)
+    pub max_violations_kill: u32,
+}
+
 /// Logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogConfig {
@@ -124,6 +150,7 @@ impl Default for Config {
             kesl: KeslConfig::default(),
             node: NodeConfig::default(),
             snap: SnapConfig::default(),
+            firefox: FirefoxConfig::default(),
             logging: LogConfig::default(),
             monitoring: MonitoringConfig::default(),
         }
@@ -162,6 +189,19 @@ impl Default for SnapConfig {
             nice_level: 15,  // Moderate de-prioritization
             freeze_duration_secs: 5,  // 5 seconds if freeze action
             max_violations: 3,
+        }
+    }
+}
+
+impl Default for FirefoxConfig {
+    fn default() -> Self {
+        Self {
+            cpu_threshold_freeze: 80.0,    // Freeze at 80% CPU
+            cpu_threshold_kill: 95.0,      // Kill at 95% CPU (critical)
+            enabled: true,
+            freeze_duration_secs: 5,       // Freeze for 5 seconds
+            max_violations_freeze: 2,      // Freeze after 2 violations
+            max_violations_kill: 3,        // Kill after 3 violations
         }
     }
 }
@@ -269,6 +309,36 @@ impl Config {
 
         if self.snap.max_violations == 0 {
             return Err("Snap max violations must be > 0".to_string());
+        }
+
+        // Validate Firefox config
+        if self.firefox.cpu_threshold_freeze < 0.0 || self.firefox.cpu_threshold_freeze > 100.0 {
+            return Err(format!(
+                "Firefox freeze CPU threshold must be 0-100, got: {}",
+                self.firefox.cpu_threshold_freeze
+            ));
+        }
+
+        if self.firefox.cpu_threshold_kill < 0.0 || self.firefox.cpu_threshold_kill > 100.0 {
+            return Err(format!(
+                "Firefox kill CPU threshold must be 0-100, got: {}",
+                self.firefox.cpu_threshold_kill
+            ));
+        }
+
+        if self.firefox.cpu_threshold_kill <= self.firefox.cpu_threshold_freeze {
+            return Err(format!(
+                "Firefox kill threshold ({}) must be > freeze threshold ({})",
+                self.firefox.cpu_threshold_kill, self.firefox.cpu_threshold_freeze
+            ));
+        }
+
+        if self.firefox.max_violations_freeze == 0 {
+            return Err("Firefox max violations (freeze) must be > 0".to_string());
+        }
+
+        if self.firefox.max_violations_kill == 0 {
+            return Err("Firefox max violations (kill) must be > 0".to_string());
         }
 
         // Validate monitoring config

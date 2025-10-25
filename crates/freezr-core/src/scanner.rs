@@ -155,6 +155,54 @@ impl ProcessScanner {
         Ok(pids)
     }
 
+    /// Найти все Firefox процессы
+    pub fn scan_firefox_processes(&self) -> Result<Vec<ProcessInfo>> {
+        let pids = self.find_firefox_pids()?;
+        let mut processes = Vec::new();
+
+        for pid in pids {
+            // Измерить CPU через top
+            let cpu = self.measure_cpu_top(pid)?;
+
+            // Получить память
+            let memory_kb = self.get_memory_kb(pid)?;
+
+            // Получить имя и команду
+            let (name, command) = self.get_process_info(pid)?;
+
+            processes.push(ProcessInfo::new(pid, name, command, cpu, memory_kb));
+        }
+
+        Ok(processes)
+    }
+
+    /// Найти все PID процессов Firefox
+    fn find_firefox_pids(&self) -> Result<Vec<u32>> {
+        let output = Command::new("ps")
+            .args(&["aux"])
+            .output()
+            .map_err(|e| Error::Scanner(format!("Failed to run ps: {}", e)))?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut pids = Vec::new();
+
+        for line in stdout.lines() {
+            // Проверяем: команда содержит "firefox" (включая /usr/lib/firefox/firefox)
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() > 10 {
+                let cmd = parts[10];
+                // Ищем firefox в команде (может быть firefox, /usr/bin/firefox, /usr/lib/firefox/firefox)
+                if cmd.contains("firefox") && !line.contains("grep") {
+                    if let Ok(pid) = parts[1].parse::<u32>() {
+                        pids.push(pid);
+                    }
+                }
+            }
+        }
+
+        Ok(pids)
+    }
+
     /// Измерить CPU через top (3 замера с усреднением)
     fn measure_cpu_average(&self, pid: u32, samples: usize) -> Result<f64> {
         let mut sum = 0.0;

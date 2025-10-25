@@ -229,6 +229,11 @@ fn display_startup_banner(config: &Config) {
               config.snap.cpu_threshold, config.snap.action, config.snap.nice_level);
     }
 
+    if config.firefox.enabled {
+        info!("   └─ Firefox: Freeze@{:.1}%, Kill@{:.1}%",
+              config.firefox.cpu_threshold_freeze, config.firefox.cpu_threshold_kill);
+    }
+
     info!("   └─ Check interval: {}s", config.monitoring.check_interval_secs);
     info!("");
 }
@@ -269,6 +274,16 @@ async fn run_with_stats(config: Config, report_interval: u64) -> Result<()> {
             config.snap.nice_level,
             config.snap.freeze_duration_secs,
             config.snap.max_violations,
+        );
+    }
+
+    if config.firefox.enabled {
+        monitor.enable_firefox_monitoring(
+            config.firefox.cpu_threshold_freeze,
+            config.firefox.cpu_threshold_kill,
+            config.firefox.freeze_duration_secs,
+            config.firefox.max_violations_freeze,
+            config.firefox.max_violations_kill,
         );
     }
 
@@ -346,6 +361,10 @@ async fn run_with_stats(config: Config, report_interval: u64) -> Result<()> {
                 println!("   🔪 Node.js kills: {}", stats.total_kills);
                 if config.snap.enabled {
                     println!("   ⚡ Snap actions: {} ({})", stats.total_kills, config.snap.action);
+                }
+                if config.firefox.enabled {
+                    println!("   🦊 Firefox: Freeze@{:.1}%, Kill@{:.1}%",
+                             config.firefox.cpu_threshold_freeze, config.firefox.cpu_threshold_kill);
                 }
                 println!();
 
@@ -514,6 +533,16 @@ async fn main() -> Result<()> {
                 config.snap.nice_level,
                 config.snap.freeze_duration_secs,
                 config.snap.max_violations,
+            );
+        }
+
+        if config.firefox.enabled {
+            monitor.enable_firefox_monitoring(
+                config.firefox.cpu_threshold_freeze,
+                config.firefox.cpu_threshold_kill,
+                config.firefox.freeze_duration_secs,
+                config.firefox.max_violations_freeze,
+                config.firefox.max_violations_kill,
             );
         }
 

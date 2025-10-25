@@ -42,6 +42,16 @@ pub struct ResourceMonitor {
     snap_freeze_duration_secs: u64,
     snap_violations: u32,
     snap_max_violations: u32,
+
+    // Firefox monitoring (two-tier strategy)
+    firefox_enabled: bool,
+    firefox_cpu_threshold_freeze: f64,
+    firefox_cpu_threshold_kill: f64,
+    firefox_freeze_duration_secs: u64,
+    firefox_violations_freeze: u32,
+    firefox_violations_kill: u32,
+    firefox_max_violations_freeze: u32,
+    firefox_max_violations_kill: u32,
 }
 
 impl ResourceMonitor {
@@ -84,6 +94,15 @@ impl ResourceMonitor {
             snap_freeze_duration_secs: 5,
             snap_violations: 0,
             snap_max_violations: 3,
+
+            firefox_enabled: false,
+            firefox_cpu_threshold_freeze: 80.0,
+            firefox_cpu_threshold_kill: 95.0,
+            firefox_freeze_duration_secs: 5,
+            firefox_violations_freeze: 0,
+            firefox_violations_kill: 0,
+            firefox_max_violations_freeze: 2,
+            firefox_max_violations_kill: 3,
         }
     }
 
@@ -130,6 +149,34 @@ impl ResourceMonitor {
         );
     }
 
+    /// Enable Firefox process monitoring (two-tier strategy)
+    ///
+    /// # Arguments
+    /// * `cpu_threshold_freeze` - CPU threshold for freezing (e.g., 80.0)
+    /// * `cpu_threshold_kill` - CPU threshold for killing (e.g., 95.0)
+    /// * `freeze_duration_secs` - Freeze duration in seconds
+    /// * `max_violations_freeze` - Maximum violations before freeze
+    /// * `max_violations_kill` - Maximum violations before kill
+    pub fn enable_firefox_monitoring(
+        &mut self,
+        cpu_threshold_freeze: f64,
+        cpu_threshold_kill: f64,
+        freeze_duration_secs: u64,
+        max_violations_freeze: u32,
+        max_violations_kill: u32,
+    ) {
+        self.firefox_enabled = true;
+        self.firefox_cpu_threshold_freeze = cpu_threshold_freeze;
+        self.firefox_cpu_threshold_kill = cpu_threshold_kill;
+        self.firefox_freeze_duration_secs = freeze_duration_secs;
+        self.firefox_max_violations_freeze = max_violations_freeze;
+        self.firefox_max_violations_kill = max_violations_kill;
+        info!(
+            "Firefox monitoring enabled: freeze at {:.1}% ({} violations), kill at {:.1}% ({} violations)",
+            cpu_threshold_freeze, max_violations_freeze, cpu_threshold_kill, max_violations_kill
+        );
+    }
+
     /// Perform single monitoring check
     ///
     /// This is the main monitoring loop that:
@@ -158,6 +205,13 @@ impl ResourceMonitor {
         if self.snap_enabled {
             if let Err(e) = self.check_snap_processes() {
                 error!("Snap monitoring error: {}", e);
+            }
+        }
+
+        // Monitor Firefox processes
+        if self.firefox_enabled {
+            if let Err(e) = self.check_firefox_processes() {
+                error!("Firefox monitoring error: {}", e);
             }
         }
 
@@ -377,6 +431,139 @@ impl ResourceMonitor {
 
             // Reset violations after taking action
             self.snap_violations = 0;
+        }
+
+        Ok(())
+    }
+
+    /// Monitor Firefox processes (two-tier strategy: freeze then kill)
+    fn check_firefox_processes(&mut self) -> Result<()> {
+        use std::thread;
+        use std::time::Duration;
+
+        let processes = self.scanner.scan_firefox_processes()?;
+
+        if processes.is_empty() {
+            debug!("No Firefox processes found");
+            // Reset violations if no processes
+            if self.firefox_violations_freeze > 0 || self.firefox_violations_kill > 0 {
+                debug!("Firefox process ended, resetting violations");
+                self.firefox_violations_freeze = 0;
+                self.firefox_violations_kill = 0;
+            }
+            return Ok(());
+        }
+
+        debug!("Found {} Firefox processes", processes.len());
+
+        // Check for critical CPU (>kill threshold)
+        let critical_processes: Vec<_> = processes
+            .iter()
+            .filter(|p| p.cpu_percent > self.firefox_cpu_threshold_kill)
+            .collect();
+
+        // Check for high CPU (>freeze threshold, but <kill threshold)
+        let high_cpu_processes: Vec<_> = processes
+            .iter()
+            .filter(|p| {
+                p.cpu_percent > self.firefox_cpu_threshold_freeze
+                    && p.cpu_percent <= self.firefox_cpu_threshold_kill
+            })
+            .collect();
+
+        // Handle critical CPU (kill strategy)
+        if !critical_processes.is_empty() {
+            self.firefox_violations_kill += 1;
+            warn!(
+                "Firefox CRITICAL CPU violation #{}: {} processes exceed {:.1}%",
+                self.firefox_violations_kill,
+                critical_processes.len(),
+                self.firefox_cpu_threshold_kill
+            );
+
+            for process in &critical_processes {
+                warn!(
+                    "CRITICAL Firefox process: PID {}, CPU {:.1}%, Command: {}",
+                    process.pid, process.cpu_percent, process.command
+                );
+            }
+
+            if self.firefox_violations_kill >= self.firefox_max_violations_kill {
+                error!(
+                    "Firefox critical violations ({}) reached, KILLING processes",
+                    self.firefox_max_violations_kill
+                );
+
+                for process in critical_processes {
+                    info!("Killing Firefox process PID {} (CPU {:.1}%)", process.pid, process.cpu_percent);
+                    if let Err(e) = ProcessExecutor::kill_process(process.pid) {
+                        error!("Failed to kill Firefox process {}: {}", process.pid, e);
+                    } else {
+                        self.stats.record_kill();
+                        info!("Successfully killed Firefox process {}", process.pid);
+                    }
+                }
+
+                self.firefox_violations_kill = 0;
+                self.firefox_violations_freeze = 0; // Reset freeze violations too
+            }
+        } else if !high_cpu_processes.is_empty() {
+            // Handle high CPU (freeze strategy)
+            self.firefox_violations_freeze += 1;
+            self.firefox_violations_kill = 0; // Reset kill violations
+
+            warn!(
+                "Firefox high CPU violation #{}: {} processes exceed {:.1}%",
+                self.firefox_violations_freeze,
+                high_cpu_processes.len(),
+                self.firefox_cpu_threshold_freeze
+            );
+
+            for process in &high_cpu_processes {
+                warn!(
+                    "High-CPU Firefox process: PID {}, CPU {:.1}%, Command: {}",
+                    process.pid, process.cpu_percent, process.command
+                );
+            }
+
+            if self.firefox_violations_freeze >= self.firefox_max_violations_freeze {
+                warn!(
+                    "Firefox freeze violations ({}) reached, FREEZING processes",
+                    self.firefox_max_violations_freeze
+                );
+
+                for process in high_cpu_processes {
+                    info!(
+                        "Freezing Firefox process PID {} for {} seconds (CPU {:.1}%)",
+                        process.pid, self.firefox_freeze_duration_secs, process.cpu_percent
+                    );
+
+                    if let Err(e) = ProcessExecutor::freeze_process(process.pid) {
+                        error!("Failed to freeze Firefox process {}: {}", process.pid, e);
+                    } else {
+                        info!("Firefox process {} frozen, waiting...", process.pid);
+                        thread::sleep(Duration::from_secs(self.firefox_freeze_duration_secs));
+
+                        if let Err(e) = ProcessExecutor::unfreeze_process(process.pid) {
+                            error!("Failed to unfreeze Firefox process {}: {}", process.pid, e);
+                        } else {
+                            info!("Firefox process {} unfrozen", process.pid);
+                        }
+                    }
+                }
+
+                self.firefox_violations_freeze = 0;
+            }
+        } else {
+            // CPU back to normal, reset violations
+            if self.firefox_violations_freeze > 0 || self.firefox_violations_kill > 0 {
+                debug!(
+                    "Firefox CPU back to normal, resetting violations (freeze: {}, kill: {})",
+                    self.firefox_violations_freeze, self.firefox_violations_kill
+                );
+                self.firefox_violations_freeze = 0;
+                self.firefox_violations_kill = 0;
+            }
         }
 
         Ok(())
