@@ -33,6 +33,15 @@ pub struct ResourceMonitor {
     node_enabled: bool,
     node_cpu_threshold: f64,
     node_auto_kill: bool,
+
+    // Snap/snapd monitoring
+    snap_enabled: bool,
+    snap_cpu_threshold: f64,
+    snap_action: String,
+    snap_nice_level: i32,
+    snap_freeze_duration_secs: u64,
+    snap_violations: u32,
+    snap_max_violations: u32,
 }
 
 impl ResourceMonitor {
@@ -67,6 +76,14 @@ impl ResourceMonitor {
             node_enabled: false,
             node_cpu_threshold: 80.0,
             node_auto_kill: false,
+
+            snap_enabled: false,
+            snap_cpu_threshold: 300.0,
+            snap_action: "nice".to_string(),
+            snap_nice_level: 15,
+            snap_freeze_duration_secs: 5,
+            snap_violations: 0,
+            snap_max_violations: 3,
         }
     }
 
@@ -82,6 +99,34 @@ impl ResourceMonitor {
         info!(
             "Node.js monitoring enabled: CPU threshold {:.1}%, auto-kill: {}",
             cpu_threshold, auto_kill
+        );
+    }
+
+    /// Enable Snap/snapd process monitoring
+    ///
+    /// # Arguments
+    /// * `cpu_threshold` - CPU threshold for snap processes (e.g., 300.0)
+    /// * `action` - Action to take: "freeze", "nice", or "kill"
+    /// * `nice_level` - Nice level for "nice" action (0-19)
+    /// * `freeze_duration_secs` - Freeze duration for "freeze" action
+    /// * `max_violations` - Maximum violations before action
+    pub fn enable_snap_monitoring(
+        &mut self,
+        cpu_threshold: f64,
+        action: String,
+        nice_level: i32,
+        freeze_duration_secs: u64,
+        max_violations: u32,
+    ) {
+        self.snap_enabled = true;
+        self.snap_cpu_threshold = cpu_threshold;
+        self.snap_action = action.clone();
+        self.snap_nice_level = nice_level;
+        self.snap_freeze_duration_secs = freeze_duration_secs;
+        self.snap_max_violations = max_violations;
+        info!(
+            "Snap monitoring enabled: CPU threshold {:.1}%, action: {}, nice: {}, max violations: {}",
+            cpu_threshold, action, nice_level, max_violations
         );
     }
 
@@ -106,6 +151,13 @@ impl ResourceMonitor {
         if self.node_enabled {
             if let Err(e) = self.check_node_processes() {
                 error!("Node.js monitoring error: {}", e);
+            }
+        }
+
+        // Monitor Snap/snapd processes
+        if self.snap_enabled {
+            if let Err(e) = self.check_snap_processes() {
+                error!("Snap monitoring error: {}", e);
             }
         }
 
@@ -212,6 +264,119 @@ impl ResourceMonitor {
                     }
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    /// Monitor Snap/snapd processes
+    fn check_snap_processes(&mut self) -> Result<()> {
+        use std::thread;
+        use std::time::Duration;
+
+        let processes = self.scanner.scan_snap_processes()?;
+
+        if processes.is_empty() {
+            debug!("No Snap processes found");
+            return Ok(());
+        }
+
+        debug!("Found {} Snap processes", processes.len());
+
+        // Find high-CPU snap processes
+        let high_cpu_processes: Vec<_> = processes
+            .iter()
+            .filter(|p| p.cpu_percent > self.snap_cpu_threshold)
+            .collect();
+
+        if high_cpu_processes.is_empty() {
+            // Reset violations if no high-CPU processes
+            if self.snap_violations > 0 {
+                debug!(
+                    "Snap CPU back to normal, resetting {} violations",
+                    self.snap_violations
+                );
+                self.snap_violations = 0;
+            }
+            return Ok(());
+        }
+
+        // Increment violations
+        self.snap_violations += 1;
+        warn!(
+            "Snap CPU violation #{}: {} processes exceed {:.1}%",
+            self.snap_violations,
+            high_cpu_processes.len(),
+            self.snap_cpu_threshold
+        );
+
+        for process in &high_cpu_processes {
+            warn!(
+                "High-CPU Snap process: PID {}, CPU {:.1}%, Command: {}",
+                process.pid, process.cpu_percent, process.command
+            );
+        }
+
+        // Take action if max violations reached
+        if self.snap_violations >= self.snap_max_violations {
+            error!(
+                "Snap max violations ({}) reached, taking action: {}",
+                self.snap_max_violations, self.snap_action
+            );
+
+            for process in high_cpu_processes {
+                match self.snap_action.as_str() {
+                    "nice" => {
+                        info!(
+                            "Setting nice level {} for snap process PID {}",
+                            self.snap_nice_level, process.pid
+                        );
+                        if let Err(e) =
+                            ProcessExecutor::renice_process(process.pid, self.snap_nice_level)
+                        {
+                            error!("Failed to renice snap process {}: {}", process.pid, e);
+                        } else {
+                            info!(
+                                "Successfully set nice level {} for snap process {}",
+                                self.snap_nice_level, process.pid
+                            );
+                        }
+                    }
+                    "freeze" => {
+                        info!(
+                            "Freezing snap process PID {} for {} seconds",
+                            process.pid, self.snap_freeze_duration_secs
+                        );
+                        if let Err(e) = ProcessExecutor::freeze_process(process.pid) {
+                            error!("Failed to freeze snap process {}: {}", process.pid, e);
+                        } else {
+                            info!("Snap process {} frozen, waiting...", process.pid);
+                            thread::sleep(Duration::from_secs(self.snap_freeze_duration_secs));
+
+                            if let Err(e) = ProcessExecutor::unfreeze_process(process.pid) {
+                                error!("Failed to unfreeze snap process {}: {}", process.pid, e);
+                            } else {
+                                info!("Snap process {} unfrozen", process.pid);
+                            }
+                        }
+                    }
+                    "kill" => {
+                        info!("Killing snap process PID {}", process.pid);
+                        if let Err(e) = ProcessExecutor::kill_process(process.pid) {
+                            error!("Failed to kill snap process {}: {}", process.pid, e);
+                        } else {
+                            self.stats.record_kill();
+                            info!("Successfully killed snap process {}", process.pid);
+                        }
+                    }
+                    _ => {
+                        warn!("Unknown snap action: {}", self.snap_action);
+                    }
+                }
+            }
+
+            // Reset violations after taking action
+            self.snap_violations = 0;
         }
 
         Ok(())

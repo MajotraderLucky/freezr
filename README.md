@@ -56,6 +56,7 @@ Load drops → FreezR unfreezes Chrome → Everything continues normally 🎉
 - 🔧 **Build processes** (cargo, npm) overloading system
 - 🎮 **Gaming** while background tasks compete for CPU
 - 💻 **Low-spec machines** that need aggressive protection
+- 📦 **Snap/snapd processes** consuming >300% CPU (multi-core)
 
 ## 📦 Installation
 
@@ -182,6 +183,7 @@ freezr export --format json --output report.json
 - ✅ **Periodic Reporting** - Automated detailed reports at configurable intervals
 - ✅ **System Health Monitoring** - Load average, memory usage snapshots
 - ✅ **Professional Logging** - Daily rotation, startup banner, structured logs
+- ✅ **Multi-Process Support** - KESL, Node.js, and **Snap/snapd** monitoring
 
 ### Quick Start
 
@@ -225,6 +227,7 @@ alias procmonLogsR='tail -f /path/to/freezr/logs/process_monitor.log.$(date +%Y-
 - 📖 **[Process Monitor Guide](docs/PROCESS_MONITOR_GUIDE.md)** - Complete documentation
 - 📋 **[Usage Examples](docs/examples/PROCESS_MONITOR_EXAMPLES.md)** - Real-world scenarios
 - 📊 **[Quick Summary](PROCESS_MONITOR_SUMMARY.md)** - Overview and comparison
+- 📦 **[Snap Monitoring](SNAP_MONITORING.md)** - Snap/snapd process management (NEW)
 
 ---
 

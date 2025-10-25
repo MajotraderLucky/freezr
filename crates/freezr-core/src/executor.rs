@@ -118,6 +118,49 @@ impl ProcessExecutor {
 
         Ok(())
     }
+
+    /// Set process nice level (priority)
+    ///
+    /// Nice values: -20 (highest priority) to 19 (lowest priority)
+    /// Higher nice = lower priority
+    pub fn renice_process(pid: u32, nice_level: i32) -> Result<()> {
+        use std::process::Command;
+
+        if !Self::process_exists(pid)? {
+            return Err(Error::Executor(format!(
+                "Process {} does not exist",
+                pid
+            )));
+        }
+
+        // Validate nice level
+        if nice_level < -20 || nice_level > 19 {
+            return Err(Error::Executor(format!(
+                "Invalid nice level {}, must be -20 to 19",
+                nice_level
+            )));
+        }
+
+        // Use renice command to change priority
+        let output = Command::new("sudo")
+            .arg("renice")
+            .arg("-n")
+            .arg(nice_level.to_string())
+            .arg("-p")
+            .arg(pid.to_string())
+            .output()
+            .map_err(|e| Error::Executor(format!("Failed to run renice: {}", e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(Error::Executor(format!(
+                "Failed to renice process {}: {}",
+                pid, stderr
+            )));
+        }
+
+        Ok(())
+    }
 }
 
 // Unit tests

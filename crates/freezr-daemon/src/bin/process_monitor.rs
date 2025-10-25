@@ -224,6 +224,11 @@ fn display_startup_banner(config: &Config) {
               config.node.cpu_threshold, config.node.auto_kill);
     }
 
+    if config.snap.enabled {
+        info!("   └─ Snap: CPU {:.1}%, Action: {}, Nice: {}",
+              config.snap.cpu_threshold, config.snap.action, config.snap.nice_level);
+    }
+
     info!("   └─ Check interval: {}s", config.monitoring.check_interval_secs);
     info!("");
 }
@@ -255,6 +260,16 @@ async fn run_with_stats(config: Config, report_interval: u64) -> Result<()> {
 
     if config.node.enabled {
         monitor.enable_node_monitoring(config.node.cpu_threshold, config.node.auto_kill);
+    }
+
+    if config.snap.enabled {
+        monitor.enable_snap_monitoring(
+            config.snap.cpu_threshold,
+            config.snap.action.clone(),
+            config.snap.nice_level,
+            config.snap.freeze_duration_secs,
+            config.snap.max_violations,
+        );
     }
 
     let check_interval = Duration::from_secs(config.monitoring.check_interval_secs);
@@ -329,6 +344,9 @@ async fn run_with_stats(config: Config, report_interval: u64) -> Result<()> {
                 println!("╚═══════════════════════════════════════════════════════════╝");
                 println!("   🔄 KESL restarts: {}", stats.total_restarts);
                 println!("   🔪 Node.js kills: {}", stats.total_kills);
+                if config.snap.enabled {
+                    println!("   ⚡ Snap actions: {} ({})", stats.total_kills, config.snap.action);
+                }
                 println!();
 
                 // System health
@@ -487,6 +505,16 @@ async fn main() -> Result<()> {
 
         if config.node.enabled {
             monitor.enable_node_monitoring(config.node.cpu_threshold, config.node.auto_kill);
+        }
+
+        if config.snap.enabled {
+            monitor.enable_snap_monitoring(
+                config.snap.cpu_threshold,
+                config.snap.action.clone(),
+                config.snap.nice_level,
+                config.snap.freeze_duration_secs,
+                config.snap.max_violations,
+            );
         }
 
         let check_interval = Duration::from_secs(config.monitoring.check_interval_secs);

@@ -10,6 +10,9 @@ pub struct Config {
     /// Node.js monitoring configuration
     pub node: NodeConfig,
 
+    /// Snap/snapd monitoring configuration
+    pub snap: SnapConfig,
+
     /// Logging configuration
     pub logging: LogConfig,
 
@@ -56,6 +59,32 @@ pub struct NodeConfig {
     pub confirm_kill: bool,
 }
 
+/// Snap/snapd process monitoring configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapConfig {
+    /// CPU threshold for snap processes (default: 300.0)
+    /// Snap can use multiple cores, so threshold can be >100%
+    pub cpu_threshold: f64,
+
+    /// Enable snap monitoring (default: true)
+    pub enabled: bool,
+
+    /// Action to take when threshold exceeded
+    /// Options: "freeze", "nice", "kill"
+    pub action: String,
+
+    /// Nice level to set (0-19, higher = lower priority)
+    /// Used when action = "nice"
+    pub nice_level: i32,
+
+    /// Freeze duration in seconds
+    /// Used when action = "freeze"
+    pub freeze_duration_secs: u64,
+
+    /// Maximum violations before taking action
+    pub max_violations: u32,
+}
+
 /// Logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogConfig {
@@ -94,6 +123,7 @@ impl Default for Config {
         Self {
             kesl: KeslConfig::default(),
             node: NodeConfig::default(),
+            snap: SnapConfig::default(),
             logging: LogConfig::default(),
             monitoring: MonitoringConfig::default(),
         }
@@ -119,6 +149,19 @@ impl Default for NodeConfig {
             enabled: true,
             auto_kill: true,
             confirm_kill: false,
+        }
+    }
+}
+
+impl Default for SnapConfig {
+    fn default() -> Self {
+        Self {
+            cpu_threshold: 300.0,  // 300% = 3 cores fully used
+            enabled: true,
+            action: "nice".to_string(),  // Default: lower priority, don't kill
+            nice_level: 15,  // Moderate de-prioritization
+            freeze_duration_secs: 5,  // 5 seconds if freeze action
+            max_violations: 3,
         }
     }
 }
@@ -200,6 +243,32 @@ impl Config {
                 "Node CPU threshold must be 0-100, got: {}",
                 self.node.cpu_threshold
             ));
+        }
+
+        // Validate Snap config
+        if self.snap.cpu_threshold < 0.0 || self.snap.cpu_threshold > 1000.0 {
+            return Err(format!(
+                "Snap CPU threshold must be 0-1000, got: {}",
+                self.snap.cpu_threshold
+            ));
+        }
+
+        if !["freeze", "nice", "kill"].contains(&self.snap.action.as_str()) {
+            return Err(format!(
+                "Snap action must be 'freeze', 'nice', or 'kill', got: {}",
+                self.snap.action
+            ));
+        }
+
+        if self.snap.nice_level < 0 || self.snap.nice_level > 19 {
+            return Err(format!(
+                "Snap nice level must be 0-19, got: {}",
+                self.snap.nice_level
+            ));
+        }
+
+        if self.snap.max_violations == 0 {
+            return Err("Snap max violations must be > 0".to_string());
         }
 
         // Validate monitoring config
