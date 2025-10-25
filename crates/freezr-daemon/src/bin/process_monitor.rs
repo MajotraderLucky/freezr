@@ -234,6 +234,11 @@ fn display_startup_banner(config: &Config) {
               config.firefox.cpu_threshold_freeze, config.firefox.cpu_threshold_kill);
     }
 
+    if config.brave.enabled {
+        info!("   └─ Brave: Freeze@{:.1}%, Kill@{:.1}%",
+              config.brave.cpu_threshold_freeze, config.brave.cpu_threshold_kill);
+    }
+
     info!("   └─ Check interval: {}s", config.monitoring.check_interval_secs);
     info!("");
 }
@@ -284,6 +289,16 @@ async fn run_with_stats(config: Config, report_interval: u64) -> Result<()> {
             config.firefox.freeze_duration_secs,
             config.firefox.max_violations_freeze,
             config.firefox.max_violations_kill,
+        );
+    }
+
+    if config.brave.enabled {
+        monitor.enable_brave_monitoring(
+            config.brave.cpu_threshold_freeze,
+            config.brave.cpu_threshold_kill,
+            config.brave.freeze_duration_secs,
+            config.brave.max_violations_freeze,
+            config.brave.max_violations_kill,
         );
     }
 
@@ -365,6 +380,10 @@ async fn run_with_stats(config: Config, report_interval: u64) -> Result<()> {
                 if config.firefox.enabled {
                     println!("   🦊 Firefox: Freeze@{:.1}%, Kill@{:.1}%",
                              config.firefox.cpu_threshold_freeze, config.firefox.cpu_threshold_kill);
+                }
+                if config.brave.enabled {
+                    println!("   🦁 Brave: Freeze@{:.1}%, Kill@{:.1}%",
+                             config.brave.cpu_threshold_freeze, config.brave.cpu_threshold_kill);
                 }
                 println!();
 
@@ -543,6 +562,16 @@ async fn main() -> Result<()> {
                 config.firefox.freeze_duration_secs,
                 config.firefox.max_violations_freeze,
                 config.firefox.max_violations_kill,
+            );
+        }
+
+        if config.brave.enabled {
+            monitor.enable_brave_monitoring(
+                config.brave.cpu_threshold_freeze,
+                config.brave.cpu_threshold_kill,
+                config.brave.freeze_duration_secs,
+                config.brave.max_violations_freeze,
+                config.brave.max_violations_kill,
             );
         }
 

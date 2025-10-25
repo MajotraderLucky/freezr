@@ -52,6 +52,16 @@ pub struct ResourceMonitor {
     firefox_violations_kill: u32,
     firefox_max_violations_freeze: u32,
     firefox_max_violations_kill: u32,
+
+    // Brave monitoring (two-tier strategy)
+    brave_enabled: bool,
+    brave_cpu_threshold_freeze: f64,
+    brave_cpu_threshold_kill: f64,
+    brave_freeze_duration_secs: u64,
+    brave_violations_freeze: u32,
+    brave_violations_kill: u32,
+    brave_max_violations_freeze: u32,
+    brave_max_violations_kill: u32,
 }
 
 impl ResourceMonitor {
@@ -103,6 +113,15 @@ impl ResourceMonitor {
             firefox_violations_kill: 0,
             firefox_max_violations_freeze: 2,
             firefox_max_violations_kill: 3,
+
+            brave_enabled: false,
+            brave_cpu_threshold_freeze: 80.0,
+            brave_cpu_threshold_kill: 95.0,
+            brave_freeze_duration_secs: 5,
+            brave_violations_freeze: 0,
+            brave_violations_kill: 0,
+            brave_max_violations_freeze: 2,
+            brave_max_violations_kill: 3,
         }
     }
 
@@ -177,6 +196,34 @@ impl ResourceMonitor {
         );
     }
 
+    /// Enable Brave browser process monitoring (two-tier strategy)
+    ///
+    /// # Arguments
+    /// * `cpu_threshold_freeze` - CPU threshold for freezing (e.g., 80.0)
+    /// * `cpu_threshold_kill` - CPU threshold for killing (e.g., 95.0)
+    /// * `freeze_duration_secs` - Freeze duration in seconds
+    /// * `max_violations_freeze` - Maximum violations before freeze
+    /// * `max_violations_kill` - Maximum violations before kill
+    pub fn enable_brave_monitoring(
+        &mut self,
+        cpu_threshold_freeze: f64,
+        cpu_threshold_kill: f64,
+        freeze_duration_secs: u64,
+        max_violations_freeze: u32,
+        max_violations_kill: u32,
+    ) {
+        self.brave_enabled = true;
+        self.brave_cpu_threshold_freeze = cpu_threshold_freeze;
+        self.brave_cpu_threshold_kill = cpu_threshold_kill;
+        self.brave_freeze_duration_secs = freeze_duration_secs;
+        self.brave_max_violations_freeze = max_violations_freeze;
+        self.brave_max_violations_kill = max_violations_kill;
+        info!(
+            "Brave monitoring enabled: freeze at {:.1}% ({} violations), kill at {:.1}% ({} violations)",
+            cpu_threshold_freeze, max_violations_freeze, cpu_threshold_kill, max_violations_kill
+        );
+    }
+
     /// Perform single monitoring check
     ///
     /// This is the main monitoring loop that:
@@ -212,6 +259,13 @@ impl ResourceMonitor {
         if self.firefox_enabled {
             if let Err(e) = self.check_firefox_processes() {
                 error!("Firefox monitoring error: {}", e);
+            }
+        }
+
+        // Monitor Brave processes
+        if self.brave_enabled {
+            if let Err(e) = self.check_brave_processes() {
+                error!("Brave monitoring error: {}", e);
             }
         }
 
@@ -563,6 +617,139 @@ impl ResourceMonitor {
                 );
                 self.firefox_violations_freeze = 0;
                 self.firefox_violations_kill = 0;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Monitor Brave browser processes (two-tier strategy: freeze then kill)
+    fn check_brave_processes(&mut self) -> Result<()> {
+        use std::thread;
+        use std::time::Duration;
+
+        let processes = self.scanner.scan_brave_processes()?;
+
+        if processes.is_empty() {
+            debug!("No Brave processes found");
+            // Reset violations if no processes
+            if self.brave_violations_freeze > 0 || self.brave_violations_kill > 0 {
+                debug!("Brave process ended, resetting violations");
+                self.brave_violations_freeze = 0;
+                self.brave_violations_kill = 0;
+            }
+            return Ok(());
+        }
+
+        debug!("Found {} Brave processes", processes.len());
+
+        // Check for critical CPU (>kill threshold)
+        let critical_processes: Vec<_> = processes
+            .iter()
+            .filter(|p| p.cpu_percent > self.brave_cpu_threshold_kill)
+            .collect();
+
+        // Check for high CPU (>freeze threshold, but <kill threshold)
+        let high_cpu_processes: Vec<_> = processes
+            .iter()
+            .filter(|p| {
+                p.cpu_percent > self.brave_cpu_threshold_freeze
+                    && p.cpu_percent <= self.brave_cpu_threshold_kill
+            })
+            .collect();
+
+        // Handle critical CPU (kill strategy)
+        if !critical_processes.is_empty() {
+            self.brave_violations_kill += 1;
+            warn!(
+                "Brave CRITICAL CPU violation #{}: {} processes exceed {:.1}%",
+                self.brave_violations_kill,
+                critical_processes.len(),
+                self.brave_cpu_threshold_kill
+            );
+
+            for process in &critical_processes {
+                warn!(
+                    "CRITICAL Brave process: PID {}, CPU {:.1}%, Command: {}",
+                    process.pid, process.cpu_percent, process.command
+                );
+            }
+
+            if self.brave_violations_kill >= self.brave_max_violations_kill {
+                error!(
+                    "Brave critical violations ({}) reached, KILLING processes",
+                    self.brave_max_violations_kill
+                );
+
+                for process in critical_processes {
+                    info!("Killing Brave process PID {} (CPU {:.1}%)", process.pid, process.cpu_percent);
+                    if let Err(e) = ProcessExecutor::kill_process(process.pid) {
+                        error!("Failed to kill Brave process {}: {}", process.pid, e);
+                    } else {
+                        self.stats.record_kill();
+                        info!("Successfully killed Brave process {}", process.pid);
+                    }
+                }
+
+                self.brave_violations_kill = 0;
+                self.brave_violations_freeze = 0; // Reset freeze violations too
+            }
+        } else if !high_cpu_processes.is_empty() {
+            // Handle high CPU (freeze strategy)
+            self.brave_violations_freeze += 1;
+            self.brave_violations_kill = 0; // Reset kill violations
+
+            warn!(
+                "Brave high CPU violation #{}: {} processes exceed {:.1}%",
+                self.brave_violations_freeze,
+                high_cpu_processes.len(),
+                self.brave_cpu_threshold_freeze
+            );
+
+            for process in &high_cpu_processes {
+                warn!(
+                    "High-CPU Brave process: PID {}, CPU {:.1}%, Command: {}",
+                    process.pid, process.cpu_percent, process.command
+                );
+            }
+
+            if self.brave_violations_freeze >= self.brave_max_violations_freeze {
+                warn!(
+                    "Brave freeze violations ({}) reached, FREEZING processes",
+                    self.brave_max_violations_freeze
+                );
+
+                for process in high_cpu_processes {
+                    info!(
+                        "Freezing Brave process PID {} for {} seconds (CPU {:.1}%)",
+                        process.pid, self.brave_freeze_duration_secs, process.cpu_percent
+                    );
+
+                    if let Err(e) = ProcessExecutor::freeze_process(process.pid) {
+                        error!("Failed to freeze Brave process {}: {}", process.pid, e);
+                    } else {
+                        info!("Brave process {} frozen, waiting...", process.pid);
+                        thread::sleep(Duration::from_secs(self.brave_freeze_duration_secs));
+
+                        if let Err(e) = ProcessExecutor::unfreeze_process(process.pid) {
+                            error!("Failed to unfreeze Brave process {}: {}", process.pid, e);
+                        } else {
+                            info!("Brave process {} unfrozen", process.pid);
+                        }
+                    }
+                }
+
+                self.brave_violations_freeze = 0;
+            }
+        } else {
+            // CPU back to normal, reset violations
+            if self.brave_violations_freeze > 0 || self.brave_violations_kill > 0 {
+                debug!(
+                    "Brave CPU back to normal, resetting violations (freeze: {}, kill: {})",
+                    self.brave_violations_freeze, self.brave_violations_kill
+                );
+                self.brave_violations_freeze = 0;
+                self.brave_violations_kill = 0;
             }
         }
 

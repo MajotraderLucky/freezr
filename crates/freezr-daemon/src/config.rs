@@ -16,6 +16,9 @@ pub struct Config {
     /// Firefox monitoring configuration
     pub firefox: FirefoxConfig,
 
+    /// Brave browser monitoring configuration
+    pub brave: BraveConfig,
+
     /// Logging configuration
     pub logging: LogConfig,
 
@@ -111,6 +114,29 @@ pub struct FirefoxConfig {
     pub max_violations_kill: u32,
 }
 
+/// Brave browser process monitoring configuration
+/// Two-tier strategy: freeze at high load, kill at critical
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BraveConfig {
+    /// CPU threshold for freezing (default: 80.0%)
+    pub cpu_threshold_freeze: f64,
+
+    /// CPU threshold for killing (default: 95.0%)
+    pub cpu_threshold_kill: f64,
+
+    /// Enable Brave monitoring (default: true)
+    pub enabled: bool,
+
+    /// Freeze duration in seconds (default: 5)
+    pub freeze_duration_secs: u64,
+
+    /// Maximum violations before freezing (default: 2)
+    pub max_violations_freeze: u32,
+
+    /// Maximum violations before killing (default: 3)
+    pub max_violations_kill: u32,
+}
+
 /// Logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogConfig {
@@ -151,6 +177,7 @@ impl Default for Config {
             node: NodeConfig::default(),
             snap: SnapConfig::default(),
             firefox: FirefoxConfig::default(),
+            brave: BraveConfig::default(),
             logging: LogConfig::default(),
             monitoring: MonitoringConfig::default(),
         }
@@ -194,6 +221,19 @@ impl Default for SnapConfig {
 }
 
 impl Default for FirefoxConfig {
+    fn default() -> Self {
+        Self {
+            cpu_threshold_freeze: 80.0,    // Freeze at 80% CPU
+            cpu_threshold_kill: 95.0,      // Kill at 95% CPU (critical)
+            enabled: true,
+            freeze_duration_secs: 5,       // Freeze for 5 seconds
+            max_violations_freeze: 2,      // Freeze after 2 violations
+            max_violations_kill: 3,        // Kill after 3 violations
+        }
+    }
+}
+
+impl Default for BraveConfig {
     fn default() -> Self {
         Self {
             cpu_threshold_freeze: 80.0,    // Freeze at 80% CPU
@@ -339,6 +379,36 @@ impl Config {
 
         if self.firefox.max_violations_kill == 0 {
             return Err("Firefox max violations (kill) must be > 0".to_string());
+        }
+
+        // Validate Brave config
+        if self.brave.cpu_threshold_freeze < 0.0 || self.brave.cpu_threshold_freeze > 100.0 {
+            return Err(format!(
+                "Brave freeze CPU threshold must be 0-100, got: {}",
+                self.brave.cpu_threshold_freeze
+            ));
+        }
+
+        if self.brave.cpu_threshold_kill < 0.0 || self.brave.cpu_threshold_kill > 100.0 {
+            return Err(format!(
+                "Brave kill CPU threshold must be 0-100, got: {}",
+                self.brave.cpu_threshold_kill
+            ));
+        }
+
+        if self.brave.cpu_threshold_kill <= self.brave.cpu_threshold_freeze {
+            return Err(format!(
+                "Brave kill threshold ({}) must be > freeze threshold ({})",
+                self.brave.cpu_threshold_kill, self.brave.cpu_threshold_freeze
+            ));
+        }
+
+        if self.brave.max_violations_freeze == 0 {
+            return Err("Brave max violations (freeze) must be > 0".to_string());
+        }
+
+        if self.brave.max_violations_kill == 0 {
+            return Err("Brave max violations (kill) must be > 0".to_string());
         }
 
         // Validate monitoring config
