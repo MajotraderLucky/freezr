@@ -28,6 +28,7 @@ FreezR уже является функциональным production-ready и�
 - [x] Snap/snapd monitoring с nice action
 - [x] Firefox двухуровневая стратегия (freeze/kill)
 - [x] Brave двухуровневая стратегия (freeze/kill)
+- [x] **Telegram** двухуровневая стратегия (freeze/kill) ⭐ NEW - 2025-10-26
 
 ### Log Management System ✅ (NEW - 2025-10-26)
 - [x] Автоматическая daily rotation (tracing-appender)
@@ -307,11 +308,14 @@ FreezR уже является функциональным production-ready и�
 
 ## 📝 Changelog
 
-### 2025-10-26: Log Management System ✅
-- Implemented complete log lifecycle management
-- Added log maintenance scripts (archive, compress, clean)
-- Integrated log statistics into process-monitor dashboard
-- Full documentation в LOG_MAINTENANCE.md
+### 2025-10-26: Telegram Monitoring & Log Management ✅
+- **Telegram monitoring**: Two-tier freeze/kill strategy (80% freeze, 95% kill)
+- **Log Management System**: Complete log lifecycle management
+  - Automatic daily rotation (tracing-appender)
+  - Archive, compress, clean scripts
+  - Integrated log statistics into dashboard
+  - Full documentation (LOG_MAINTENANCE.md)
+- **ML Analytics Planning**: Roadmap for ML-based process predictions (ML_PROCESS_ANALYTICS.md)
 
 ### 2025-10-XX: Process Monitor Advanced Statistics ✅
 - Added extended statistics tracking

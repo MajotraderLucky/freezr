@@ -22,6 +22,9 @@ pub struct Config {
     /// Telegram messenger monitoring configuration
     pub telegram: TelegramConfig,
 
+    /// Memory pressure monitoring configuration
+    pub memory_pressure: MemoryPressureConfig,
+
     /// Logging configuration
     pub logging: LogConfig,
 
@@ -163,6 +166,41 @@ pub struct TelegramConfig {
     pub max_violations_kill: u32,
 }
 
+/// Memory pressure monitoring configuration (PSI - Pressure Stall Information)
+/// Предотвращает OOM ситуации до их возникновения
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryPressureConfig {
+    /// Enable memory pressure monitoring (default: true)
+    pub enabled: bool,
+
+    /// Warning threshold for 'some' metric (avg10)
+    /// "some" = at least one process waiting for memory
+    /// Value in percent (0.0-100.0)
+    pub some_threshold_warning: f64,
+
+    /// Critical threshold for 'some' metric (avg10)
+    pub some_threshold_critical: f64,
+
+    /// Warning threshold for 'full' metric (avg10)
+    /// "full" = all processes waiting for memory (very bad!)
+    /// Value in percent (0.0-100.0)
+    pub full_threshold_warning: f64,
+
+    /// Critical threshold for 'full' metric (avg10)
+    pub full_threshold_critical: f64,
+
+    /// Action to take on warning level
+    /// Options: "log", "nice", "freeze", "kill"
+    pub action_warning: String,
+
+    /// Action to take on critical level
+    /// Options: "log", "nice", "freeze", "kill"
+    pub action_critical: String,
+
+    /// Check interval in seconds (default: 5)
+    pub check_interval_secs: u64,
+}
+
 /// Logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogConfig {
@@ -205,6 +243,7 @@ impl Default for Config {
             firefox: FirefoxConfig::default(),
             brave: BraveConfig::default(),
             telegram: TelegramConfig::default(),
+            memory_pressure: MemoryPressureConfig::default(),
             logging: LogConfig::default(),
             monitoring: MonitoringConfig::default(),
         }
@@ -282,6 +321,21 @@ impl Default for TelegramConfig {
             freeze_duration_secs: 5,       // Freeze for 5 seconds
             max_violations_freeze: 2,      // Freeze after 2 violations
             max_violations_kill: 3,        // Kill after 3 violations
+        }
+    }
+}
+
+impl Default for MemoryPressureConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            some_threshold_warning: 10.0,      // Warning: 10% time processes waiting
+            some_threshold_critical: 30.0,     // Critical: 30% time processes waiting
+            full_threshold_warning: 5.0,       // Warning: 5% time all blocked
+            full_threshold_critical: 15.0,     // Critical: 15% time all blocked
+            action_warning: "log".to_string(), // Just log warnings
+            action_critical: "freeze".to_string(), // Freeze non-critical processes
+            check_interval_secs: 5,            // Check every 5 seconds
         }
     }
 }
