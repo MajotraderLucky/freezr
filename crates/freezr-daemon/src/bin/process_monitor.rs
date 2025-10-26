@@ -6,6 +6,8 @@ use anyhow::Result;
 use chrono::Timelike;
 use clap::Parser;
 use freezr_daemon::{Config, ResourceMonitor};
+use nix::libc;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use tracing::{error, info, warn};
 
@@ -14,6 +16,9 @@ use tracing::{error, info, warn};
 #[clap(name = "process_monitor")]
 #[clap(about = "Advanced process monitoring with statistics", long_about = None)]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     /// Path to configuration file
     #[arg(short, long, default_value = "freezr.toml")]
     config: PathBuf,
@@ -25,6 +30,26 @@ struct Args {
     /// Report interval in seconds (for stats mode)
     #[arg(long, default_value = "60")]
     report_interval: u64,
+}
+
+#[derive(Parser, Debug)]
+enum Commands {
+    /// Install FreezR as a systemd service
+    InstallService {
+        /// Skip confirmation prompt
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// Uninstall FreezR systemd service
+    UninstallService {
+        /// Skip confirmation prompt
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// Show systemd service status
+    ServiceStatus,
 }
 
 /// Ensure required directories exist and are writable
@@ -560,17 +585,338 @@ fn init_logging() -> Result<()> {
     Ok(())
 }
 
+/// Handle subcommands
+async fn handle_subcommand(command: &Commands) -> Result<()> {
+    match command {
+        Commands::InstallService { yes } => install_systemd_service(*yes),
+        Commands::UninstallService { yes } => uninstall_systemd_service(*yes),
+        Commands::ServiceStatus => show_service_status(),
+    }
+}
+
+/// Install FreezR as systemd service
+fn install_systemd_service(skip_confirm: bool) -> Result<()> {
+    use std::fs;
+    use std::io::{self, Write};
+    use std::process::Command;
+
+    println!("╔═══════════════════════════════════════════════════════════╗");
+    println!("║       FreezR Systemd Service Installation                ║");
+    println!("╚═══════════════════════════════════════════════════════════╝");
+    println!();
+
+    // Get current executable path
+    let exe_path = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("Failed to get current executable path: {}", e))?;
+
+    let exe_dir = exe_path.parent()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get executable directory"))?;
+
+    let project_dir = exe_dir.parent()
+        .and_then(|p| p.parent())
+        .ok_or_else(|| anyhow::anyhow!("Failed to determine project directory"))?;
+
+    let config_path = project_dir.join("freezr.toml");
+
+    println!("📋 Installation details:");
+    println!("   Executable: {}", exe_path.display());
+    println!("   Config: {}", config_path.display());
+    println!("   Service file: /etc/systemd/system/freezr.service");
+    println!();
+
+    // Check if we're root
+    let is_root = unsafe { libc::geteuid() } == 0;
+
+    if !is_root {
+        return Err(anyhow::anyhow!(
+            "This command must be run with sudo:\n   sudo {} install-service",
+            exe_path.display()
+        ));
+    }
+
+    // Check if service already exists
+    let service_exists = std::path::Path::new("/etc/systemd/system/freezr.service").exists();
+
+    if service_exists && !skip_confirm {
+        print!("⚠️  FreezR service already exists. Overwrite? [y/N]: ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("❌ Installation cancelled");
+            return Ok(());
+        }
+    }
+
+    // Stop existing service if running
+    if service_exists {
+        println!("⏹️  Stopping existing service...");
+        let _ = Command::new("systemctl")
+            .args(&["stop", "freezr.service"])
+            .output();
+    }
+
+    // Generate service file content
+    let service_content = format!(
+        r#"[Unit]
+Description=FreezR Process Monitor - Advanced Resource Management
+Documentation=https://github.com/yourusername/freezr
+After=network.target multi-user.target
+
+[Service]
+Type=simple
+User={user}
+Group={user}
+WorkingDirectory={workdir}
+
+# Main process with full monitoring and dashboard
+ExecStart={exe} --config {config} --stats --report-interval 60
+
+# Restart policy
+Restart=always
+RestartSec=10
+KillMode=mixed
+TimeoutStopSec=30
+
+# Resource limits for the monitor itself
+CPUQuota=5%
+MemoryMax=50M
+MemoryHigh=40M
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=freezr
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths={workdir}/logs
+ReadWritePaths={workdir}/data
+
+# Process capabilities (needed for nice, freeze, kill)
+AmbientCapabilities=CAP_SYS_NICE CAP_KILL
+CapabilityBoundingSet=CAP_SYS_NICE CAP_KILL CAP_DAC_OVERRIDE
+
+[Install]
+WantedBy=multi-user.target
+"#,
+        user = std::env::var("SUDO_USER").unwrap_or_else(|_| "root".to_string()),
+        workdir = project_dir.display(),
+        exe = exe_path.display(),
+        config = config_path.display(),
+    );
+
+    // Write service file
+    println!("📝 Writing service file...");
+    fs::write("/etc/systemd/system/freezr.service", service_content)
+        .map_err(|e| anyhow::anyhow!("Failed to write service file: {}", e))?;
+
+    // Set permissions
+    fs::set_permissions(
+        "/etc/systemd/system/freezr.service",
+        std::fs::Permissions::from_mode(0o644),
+    )?;
+
+    // Reload systemd
+    println!("🔄 Reloading systemd daemon...");
+    let output = Command::new("systemctl")
+        .arg("daemon-reload")
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run systemctl daemon-reload: {}", e))?;
+
+    if !output.status.success() {
+        return Err(anyhow::anyhow!("systemctl daemon-reload failed"));
+    }
+
+    // Enable service
+    println!("✅ Enabling service (auto-start on boot)...");
+    let output = Command::new("systemctl")
+        .args(&["enable", "freezr.service"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to enable service: {}", e))?;
+
+    if !output.status.success() {
+        return Err(anyhow::anyhow!("Failed to enable service"));
+    }
+
+    // Start service
+    println!("🚀 Starting service...");
+    let output = Command::new("systemctl")
+        .args(&["start", "freezr.service"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to start service: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!("Failed to start service: {}", stderr));
+    }
+
+    // Wait a bit
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    // Check status
+    let status_output = Command::new("systemctl")
+        .args(&["is-active", "freezr.service"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to check service status: {}", e))?;
+
+    let is_active = String::from_utf8_lossy(&status_output.stdout)
+        .trim()
+        .eq("active");
+
+    println!();
+    println!("╔═══════════════════════════════════════════════════════════╗");
+    println!("║                Installation Complete                      ║");
+    println!("╚═══════════════════════════════════════════════════════════╝");
+    println!();
+
+    if is_active {
+        println!("✅ FreezR service is RUNNING");
+        println!();
+        println!("📊 Useful commands:");
+        println!("   View logs (real-time):  sudo journalctl -u freezr -f");
+        println!("   View logs (last 50):    sudo journalctl -u freezr -n 50");
+        println!("   Check status:           sudo systemctl status freezr");
+        println!("   Restart:                sudo systemctl restart freezr");
+        println!("   Stop:                   sudo systemctl stop freezr");
+        println!("   Disable auto-start:     sudo systemctl disable freezr");
+    } else {
+        println!("❌ Service failed to start!");
+        println!("   Check logs: sudo journalctl -u freezr -n 50");
+        return Err(anyhow::anyhow!("Service is not active"));
+    }
+
+    Ok(())
+}
+
+/// Uninstall FreezR systemd service
+fn uninstall_systemd_service(skip_confirm: bool) -> Result<()> {
+    use std::fs;
+    use std::io::{self, Write};
+    use std::process::Command;
+
+    println!("╔═══════════════════════════════════════════════════════════╗");
+    println!("║       FreezR Systemd Service Uninstallation              ║");
+    println!("╚═══════════════════════════════════════════════════════════╝");
+    println!();
+
+    // Check if we're root
+    let is_root = unsafe { libc::geteuid() } == 0;
+
+    if !is_root {
+        let exe_path = std::env::current_exe()?;
+        return Err(anyhow::anyhow!(
+            "This command must be run with sudo:\n   sudo {} uninstall-service",
+            exe_path.display()
+        ));
+    }
+
+    // Check if service exists
+    if !std::path::Path::new("/etc/systemd/system/freezr.service").exists() {
+        println!("ℹ️  FreezR service is not installed");
+        return Ok(());
+    }
+
+    if !skip_confirm {
+        print!("⚠️  Remove FreezR systemd service? [y/N]: ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("❌ Uninstallation cancelled");
+            return Ok(());
+        }
+    }
+
+    // Stop service
+    println!("⏹️  Stopping service...");
+    let _ = Command::new("systemctl")
+        .args(&["stop", "freezr.service"])
+        .output();
+
+    // Disable service
+    println!("🔧 Disabling service...");
+    let _ = Command::new("systemctl")
+        .args(&["disable", "freezr.service"])
+        .output();
+
+    // Remove service file
+    println!("🗑️  Removing service file...");
+    fs::remove_file("/etc/systemd/system/freezr.service")
+        .map_err(|e| anyhow::anyhow!("Failed to remove service file: {}", e))?;
+
+    // Reload systemd
+    println!("🔄 Reloading systemd daemon...");
+    let _ = Command::new("systemctl")
+        .arg("daemon-reload")
+        .output();
+
+    println!();
+    println!("✅ FreezR service uninstalled successfully");
+
+    Ok(())
+}
+
+/// Show systemd service status
+fn show_service_status() -> Result<()> {
+    use std::process::Command;
+
+    println!("╔═══════════════════════════════════════════════════════════╗");
+    println!("║            FreezR Systemd Service Status                 ║");
+    println!("╚═══════════════════════════════════════════════════════════╝");
+    println!();
+
+    // Check if service file exists
+    if !std::path::Path::new("/etc/systemd/system/freezr.service").exists() {
+        println!("❌ FreezR service is not installed");
+        println!();
+        println!("Install with:");
+        let exe_path = std::env::current_exe()?;
+        println!("   sudo {} install-service", exe_path.display());
+        return Ok(());
+    }
+
+    // Run systemctl status
+    let output = Command::new("systemctl")
+        .args(&["status", "freezr.service", "--no-pager", "-l"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run systemctl status: {}", e))?;
+
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+
+    println!();
+    println!("📊 Quick commands:");
+    println!("   Logs (real-time):  sudo journalctl -u freezr -f");
+    println!("   Logs (last 50):    sudo journalctl -u freezr -n 50");
+    println!("   Restart:           sudo systemctl restart freezr");
+    println!("   Stop:              sudo systemctl stop freezr");
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Parse arguments first (before logging for subcommands)
+    let args = Args::parse();
+
+    // Handle subcommands (don't need logging/monitoring for these)
+    if let Some(command) = &args.command {
+        return handle_subcommand(command).await;
+    }
+
     // Initialize logging first
     init_logging()?;
 
     info!("🦀 Process Monitor starting...");
     info!("   Rust version: {}", env!("CARGO_PKG_RUST_VERSION"));
     info!("   Package version: {}", env!("CARGO_PKG_VERSION"));
-
-    // Parse arguments
-    let args = Args::parse();
 
     // Pre-flight checks
     info!("🔍 Running pre-flight checks...");
