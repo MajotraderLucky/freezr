@@ -209,6 +209,57 @@ fn check_system_health() -> Result<String> {
     ))
 }
 
+/// Get log statistics from logs directory
+fn get_log_stats() -> Result<(usize, String, usize, String)> {
+    use std::process::Command;
+
+    // Count active logs and get size
+    let active_output = Command::new("sh")
+        .arg("-c")
+        .arg("find logs/ -maxdepth 1 -name '*.log.*' -type f 2>/dev/null | wc -l")
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to count active logs: {}", e))?;
+
+    let active_count = String::from_utf8_lossy(&active_output.stdout)
+        .trim()
+        .parse::<usize>()
+        .unwrap_or(0);
+
+    let active_size_output = Command::new("sh")
+        .arg("-c")
+        .arg("du -sh logs/ 2>/dev/null | cut -f1")
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to get active logs size: {}", e))?;
+
+    let active_size = String::from_utf8_lossy(&active_size_output.stdout)
+        .trim()
+        .to_string();
+
+    // Count archive logs and get size
+    let archive_output = Command::new("sh")
+        .arg("-c")
+        .arg("find logs/archive/ -name '*.gz' -type f 2>/dev/null | wc -l")
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to count archive logs: {}", e))?;
+
+    let archive_count = String::from_utf8_lossy(&archive_output.stdout)
+        .trim()
+        .parse::<usize>()
+        .unwrap_or(0);
+
+    let archive_size_output = Command::new("sh")
+        .arg("-c")
+        .arg("du -sh logs/archive/ 2>/dev/null | cut -f1")
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to get archive logs size: {}", e))?;
+
+    let archive_size = String::from_utf8_lossy(&archive_size_output.stdout)
+        .trim()
+        .to_string();
+
+    Ok((active_count, active_size, archive_count, archive_size))
+}
+
 /// Display startup banner with system info
 fn display_startup_banner(config: &Config) {
     info!("╔═══════════════════════════════════════════════════════════╗");
@@ -237,6 +288,11 @@ fn display_startup_banner(config: &Config) {
     if config.brave.enabled {
         info!("   └─ Brave: Freeze@{:.1}%, Kill@{:.1}%",
               config.brave.cpu_threshold_freeze, config.brave.cpu_threshold_kill);
+    }
+
+    if config.telegram.enabled {
+        info!("   └─ Telegram: Freeze@{:.1}%, Kill@{:.1}%",
+              config.telegram.cpu_threshold_freeze, config.telegram.cpu_threshold_kill);
     }
 
     info!("   └─ Check interval: {}s", config.monitoring.check_interval_secs);
@@ -299,6 +355,16 @@ async fn run_with_stats(config: Config, report_interval: u64) -> Result<()> {
             config.brave.freeze_duration_secs,
             config.brave.max_violations_freeze,
             config.brave.max_violations_kill,
+        );
+    }
+
+    if config.telegram.enabled {
+        monitor.enable_telegram_monitoring(
+            config.telegram.cpu_threshold_freeze,
+            config.telegram.cpu_threshold_kill,
+            config.telegram.freeze_duration_secs,
+            config.telegram.max_violations_freeze,
+            config.telegram.max_violations_kill,
         );
     }
 
@@ -387,6 +453,10 @@ async fn run_with_stats(config: Config, report_interval: u64) -> Result<()> {
                     println!("   🦁 Brave: Freeze@{:.1}%, Kill@{:.1}%",
                              config.brave.cpu_threshold_freeze, config.brave.cpu_threshold_kill);
                 }
+                if config.telegram.enabled {
+                    println!("   ✈️  Telegram: Freeze@{:.1}%, Kill@{:.1}%",
+                             config.telegram.cpu_threshold_freeze, config.telegram.cpu_threshold_kill);
+                }
                 println!();
 
                 // System health
@@ -395,6 +465,19 @@ async fn run_with_stats(config: Config, report_interval: u64) -> Result<()> {
                 println!("╚═══════════════════════════════════════════════════════════╝");
                 if let Ok(health) = check_system_health() {
                     println!("   {}", health);
+                }
+                println!();
+
+                // Log statistics
+                println!("╔═══════════════════════════════════════════════════════════╗");
+                println!("║                    Log Statistics                         ║");
+                println!("╚═══════════════════════════════════════════════════════════╝");
+                if let Ok((active_count, active_size, archive_count, archive_size)) = get_log_stats() {
+                    println!("   📄 Active logs: {} files ({})", active_count, active_size);
+                    println!("   🗜️  Archive logs: {} files ({})", archive_count, archive_size);
+                    println!("   📊 Retention: 7 days active, 30 days archived");
+                } else {
+                    println!("   ⚠️  Unable to fetch log statistics");
                 }
                 println!();
 

@@ -62,6 +62,16 @@ pub struct ResourceMonitor {
     brave_violations_kill: u32,
     brave_max_violations_freeze: u32,
     brave_max_violations_kill: u32,
+
+    // Telegram monitoring (two-tier strategy)
+    telegram_enabled: bool,
+    telegram_cpu_threshold_freeze: f64,
+    telegram_cpu_threshold_kill: f64,
+    telegram_freeze_duration_secs: u64,
+    telegram_violations_freeze: u32,
+    telegram_violations_kill: u32,
+    telegram_max_violations_freeze: u32,
+    telegram_max_violations_kill: u32,
 }
 
 impl ResourceMonitor {
@@ -122,6 +132,15 @@ impl ResourceMonitor {
             brave_violations_kill: 0,
             brave_max_violations_freeze: 2,
             brave_max_violations_kill: 3,
+
+            telegram_enabled: false,
+            telegram_cpu_threshold_freeze: 80.0,
+            telegram_cpu_threshold_kill: 95.0,
+            telegram_freeze_duration_secs: 5,
+            telegram_violations_freeze: 0,
+            telegram_violations_kill: 0,
+            telegram_max_violations_freeze: 2,
+            telegram_max_violations_kill: 3,
         }
     }
 
@@ -224,6 +243,34 @@ impl ResourceMonitor {
         );
     }
 
+    /// Enable Telegram messenger process monitoring (two-tier strategy)
+    ///
+    /// # Arguments
+    /// * `cpu_threshold_freeze` - CPU threshold for freezing (e.g., 80.0)
+    /// * `cpu_threshold_kill` - CPU threshold for killing (e.g., 95.0)
+    /// * `freeze_duration_secs` - Freeze duration in seconds
+    /// * `max_violations_freeze` - Maximum violations before freeze
+    /// * `max_violations_kill` - Maximum violations before kill
+    pub fn enable_telegram_monitoring(
+        &mut self,
+        cpu_threshold_freeze: f64,
+        cpu_threshold_kill: f64,
+        freeze_duration_secs: u64,
+        max_violations_freeze: u32,
+        max_violations_kill: u32,
+    ) {
+        self.telegram_enabled = true;
+        self.telegram_cpu_threshold_freeze = cpu_threshold_freeze;
+        self.telegram_cpu_threshold_kill = cpu_threshold_kill;
+        self.telegram_freeze_duration_secs = freeze_duration_secs;
+        self.telegram_max_violations_freeze = max_violations_freeze;
+        self.telegram_max_violations_kill = max_violations_kill;
+        info!(
+            "Telegram monitoring enabled: freeze at {:.1}% ({} violations), kill at {:.1}% ({} violations)",
+            cpu_threshold_freeze, max_violations_freeze, cpu_threshold_kill, max_violations_kill
+        );
+    }
+
     /// Perform single monitoring check
     ///
     /// This is the main monitoring loop that:
@@ -266,6 +313,13 @@ impl ResourceMonitor {
         if self.brave_enabled {
             if let Err(e) = self.check_brave_processes() {
                 error!("Brave monitoring error: {}", e);
+            }
+        }
+
+        // Monitor Telegram processes
+        if self.telegram_enabled {
+            if let Err(e) = self.check_telegram_processes() {
+                error!("Telegram monitoring error: {}", e);
             }
         }
 
@@ -750,6 +804,139 @@ impl ResourceMonitor {
                 );
                 self.brave_violations_freeze = 0;
                 self.brave_violations_kill = 0;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check and manage Telegram messenger processes (two-tier strategy: freeze/kill)
+    fn check_telegram_processes(&mut self) -> Result<()> {
+        use std::thread;
+        use std::time::Duration;
+
+        let processes = self.scanner.scan_telegram_processes()?;
+
+        if processes.is_empty() {
+            debug!("No Telegram processes found");
+            // Reset violations if no processes
+            if self.telegram_violations_freeze > 0 || self.telegram_violations_kill > 0 {
+                debug!("Telegram process ended, resetting violations");
+                self.telegram_violations_freeze = 0;
+                self.telegram_violations_kill = 0;
+            }
+            return Ok(());
+        }
+
+        debug!("Found {} Telegram processes", processes.len());
+
+        // Check for critical CPU (>kill threshold)
+        let critical_processes: Vec<_> = processes
+            .iter()
+            .filter(|p| p.cpu_percent > self.telegram_cpu_threshold_kill)
+            .collect();
+
+        // Check for high CPU (>freeze threshold, but <kill threshold)
+        let high_cpu_processes: Vec<_> = processes
+            .iter()
+            .filter(|p| {
+                p.cpu_percent > self.telegram_cpu_threshold_freeze
+                    && p.cpu_percent <= self.telegram_cpu_threshold_kill
+            })
+            .collect();
+
+        // Handle critical CPU (kill strategy)
+        if !critical_processes.is_empty() {
+            self.telegram_violations_kill += 1;
+            warn!(
+                "Telegram CRITICAL CPU violation #{}: {} processes exceed {:.1}%",
+                self.telegram_violations_kill,
+                critical_processes.len(),
+                self.telegram_cpu_threshold_kill
+            );
+
+            for process in &critical_processes {
+                warn!(
+                    "CRITICAL Telegram process: PID {}, CPU {:.1}%, Command: {}",
+                    process.pid, process.cpu_percent, process.command
+                );
+            }
+
+            if self.telegram_violations_kill >= self.telegram_max_violations_kill {
+                error!(
+                    "Telegram critical violations ({}) reached, KILLING processes",
+                    self.telegram_max_violations_kill
+                );
+
+                for process in critical_processes {
+                    info!("Killing Telegram process PID {} (CPU {:.1}%)", process.pid, process.cpu_percent);
+                    if let Err(e) = ProcessExecutor::kill_process(process.pid) {
+                        error!("Failed to kill Telegram process {}: {}", process.pid, e);
+                    } else {
+                        self.stats.record_kill();
+                        info!("Successfully killed Telegram process {}", process.pid);
+                    }
+                }
+
+                self.telegram_violations_kill = 0;
+                self.telegram_violations_freeze = 0; // Reset freeze violations too
+            }
+        } else if !high_cpu_processes.is_empty() {
+            // Handle high CPU (freeze strategy)
+            self.telegram_violations_freeze += 1;
+            self.telegram_violations_kill = 0; // Reset kill violations
+
+            warn!(
+                "Telegram high CPU violation #{}: {} processes exceed {:.1}%",
+                self.telegram_violations_freeze,
+                high_cpu_processes.len(),
+                self.telegram_cpu_threshold_freeze
+            );
+
+            for process in &high_cpu_processes {
+                warn!(
+                    "High-CPU Telegram process: PID {}, CPU {:.1}%, Command: {}",
+                    process.pid, process.cpu_percent, process.command
+                );
+            }
+
+            if self.telegram_violations_freeze >= self.telegram_max_violations_freeze {
+                warn!(
+                    "Telegram freeze violations ({}) reached, FREEZING processes",
+                    self.telegram_max_violations_freeze
+                );
+
+                for process in high_cpu_processes {
+                    info!(
+                        "Freezing Telegram process PID {} for {} seconds (CPU {:.1}%)",
+                        process.pid, self.telegram_freeze_duration_secs, process.cpu_percent
+                    );
+
+                    if let Err(e) = ProcessExecutor::freeze_process(process.pid) {
+                        error!("Failed to freeze Telegram process {}: {}", process.pid, e);
+                    } else {
+                        info!("Telegram process {} frozen, waiting...", process.pid);
+                        thread::sleep(Duration::from_secs(self.telegram_freeze_duration_secs));
+
+                        if let Err(e) = ProcessExecutor::unfreeze_process(process.pid) {
+                            error!("Failed to unfreeze Telegram process {}: {}", process.pid, e);
+                        } else {
+                            info!("Telegram process {} unfrozen", process.pid);
+                        }
+                    }
+                }
+
+                self.telegram_violations_freeze = 0;
+            }
+        } else {
+            // CPU back to normal, reset violations
+            if self.telegram_violations_freeze > 0 || self.telegram_violations_kill > 0 {
+                debug!(
+                    "Telegram CPU back to normal, resetting violations (freeze: {}, kill: {})",
+                    self.telegram_violations_freeze, self.telegram_violations_kill
+                );
+                self.telegram_violations_freeze = 0;
+                self.telegram_violations_kill = 0;
             }
         }
 

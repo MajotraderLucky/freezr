@@ -19,6 +19,9 @@ pub struct Config {
     /// Brave browser monitoring configuration
     pub brave: BraveConfig,
 
+    /// Telegram messenger monitoring configuration
+    pub telegram: TelegramConfig,
+
     /// Logging configuration
     pub logging: LogConfig,
 
@@ -137,6 +140,29 @@ pub struct BraveConfig {
     pub max_violations_kill: u32,
 }
 
+/// Telegram messenger monitoring configuration
+/// Two-tier strategy: freeze at high load, kill at critical
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelegramConfig {
+    /// CPU threshold for freezing (default: 80.0%)
+    pub cpu_threshold_freeze: f64,
+
+    /// CPU threshold for killing (default: 95.0%)
+    pub cpu_threshold_kill: f64,
+
+    /// Enable Telegram monitoring (default: true)
+    pub enabled: bool,
+
+    /// Freeze duration in seconds (default: 5)
+    pub freeze_duration_secs: u64,
+
+    /// Maximum violations before freezing (default: 2)
+    pub max_violations_freeze: u32,
+
+    /// Maximum violations before killing (default: 3)
+    pub max_violations_kill: u32,
+}
+
 /// Logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogConfig {
@@ -178,6 +204,7 @@ impl Default for Config {
             snap: SnapConfig::default(),
             firefox: FirefoxConfig::default(),
             brave: BraveConfig::default(),
+            telegram: TelegramConfig::default(),
             logging: LogConfig::default(),
             monitoring: MonitoringConfig::default(),
         }
@@ -234,6 +261,19 @@ impl Default for FirefoxConfig {
 }
 
 impl Default for BraveConfig {
+    fn default() -> Self {
+        Self {
+            cpu_threshold_freeze: 80.0,    // Freeze at 80% CPU
+            cpu_threshold_kill: 95.0,      // Kill at 95% CPU (critical)
+            enabled: true,
+            freeze_duration_secs: 5,       // Freeze for 5 seconds
+            max_violations_freeze: 2,      // Freeze after 2 violations
+            max_violations_kill: 3,        // Kill after 3 violations
+        }
+    }
+}
+
+impl Default for TelegramConfig {
     fn default() -> Self {
         Self {
             cpu_threshold_freeze: 80.0,    // Freeze at 80% CPU
