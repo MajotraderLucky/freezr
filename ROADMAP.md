@@ -50,13 +50,16 @@ FreezR уже является функциональным production-ready и�
 
 ### 2.1 Enhanced Monitoring (Priority: HIGH)
 
-#### Memory Pressure Detection 🔄
-- [ ] Implement memory pressure monitoring (PSI - Pressure Stall Information)
-- [ ] Parse `/proc/pressure/memory` для early warning
-- [ ] Configurable thresholds для memory pressure
-- [ ] Integration в dashboard
+#### Memory Pressure Detection ✅ (COMPLETED - 2025-10-26)
+- [x] Implement memory pressure monitoring (PSI - Pressure Stall Information)
+- [x] Parse `/proc/pressure/memory` для early warning
+- [x] Configurable thresholds для memory pressure (warning/critical)
+- [x] Integration в dashboard
+- [x] Proactive actions (log, nice, freeze, kill)
+- [x] Two-tier warning/critical system
+- [x] Full documentation (MEMORY_PRESSURE.md)
 
-**Benefit**: Предсказание OOM ситуаций до их возникновения
+**Benefit**: Предсказание OOM ситуаций до их возникновения ✅ ДОСТИГНУТО
 
 #### Disk I/O Monitoring 📊
 - [ ] Track disk I/O usage per process
@@ -308,7 +311,15 @@ FreezR уже является функциональным production-ready и�
 
 ## 📝 Changelog
 
-### 2025-10-26: Telegram Monitoring & Log Management ✅
+### 2025-10-26: Memory Pressure Monitoring (PSI) ✅
+- **Memory Pressure Detection**: Proactive OOM prevention using Linux PSI
+  - Reads `/proc/pressure/memory` for early warning signals
+  - Two-tier thresholds: warning (log) and critical (freeze/kill)
+  - Four action levels: log, nice, freeze, kill
+  - Targets non-critical processes (Firefox, Brave, Telegram)
+  - Real-time dashboard integration with color-coded status
+  - Configurable check interval (default: 5 seconds)
+  - Full documentation (MEMORY_PRESSURE.md)
 - **Telegram monitoring**: Two-tier freeze/kill strategy (80% freeze, 95% kill)
 - **Log Management System**: Complete log lifecycle management
   - Automatic daily rotation (tracing-appender)

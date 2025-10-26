@@ -1,11 +1,13 @@
 use freezr_core::{
     error::{Error, Result},
     executor::ProcessExecutor,
+    memory_pressure::MemoryPressure,
     scanner::ProcessScanner,
     systemd::SystemdService,
     types::MonitorStats,
 };
 use tracing::{debug, error, info, warn};
+use std::time::{Duration, Instant};
 
 /// Resource monitor with violation tracking
 ///
@@ -72,6 +74,19 @@ pub struct ResourceMonitor {
     telegram_violations_kill: u32,
     telegram_max_violations_freeze: u32,
     telegram_max_violations_kill: u32,
+
+    // Memory pressure monitoring (PSI - Pressure Stall Information)
+    memory_pressure_enabled: bool,
+    memory_pressure_some_threshold_warning: f64,
+    memory_pressure_some_threshold_critical: f64,
+    memory_pressure_full_threshold_warning: f64,
+    memory_pressure_full_threshold_critical: f64,
+    memory_pressure_action_warning: String,
+    memory_pressure_action_critical: String,
+    memory_pressure_check_interval: Duration,
+    memory_pressure_last_check: Instant,
+    memory_pressure_warning_count: u32,
+    memory_pressure_critical_count: u32,
 }
 
 impl ResourceMonitor {
@@ -141,6 +156,18 @@ impl ResourceMonitor {
             telegram_violations_kill: 0,
             telegram_max_violations_freeze: 2,
             telegram_max_violations_kill: 3,
+
+            memory_pressure_enabled: false,
+            memory_pressure_some_threshold_warning: 10.0,
+            memory_pressure_some_threshold_critical: 30.0,
+            memory_pressure_full_threshold_warning: 5.0,
+            memory_pressure_full_threshold_critical: 15.0,
+            memory_pressure_action_warning: "log".to_string(),
+            memory_pressure_action_critical: "freeze".to_string(),
+            memory_pressure_check_interval: Duration::from_secs(5),
+            memory_pressure_last_check: Instant::now(),
+            memory_pressure_warning_count: 0,
+            memory_pressure_critical_count: 0,
         }
     }
 
@@ -271,6 +298,42 @@ impl ResourceMonitor {
         );
     }
 
+    /// Enable memory pressure monitoring (PSI - Pressure Stall Information)
+    ///
+    /// # Arguments
+    /// * `some_threshold_warning` - Warning threshold for 'some' metric (% time processes waiting)
+    /// * `some_threshold_critical` - Critical threshold for 'some' metric
+    /// * `full_threshold_warning` - Warning threshold for 'full' metric (% time all blocked)
+    /// * `full_threshold_critical` - Critical threshold for 'full' metric
+    /// * `action_warning` - Action for warning level ("log", "nice", "freeze", "kill")
+    /// * `action_critical` - Action for critical level
+    /// * `check_interval_secs` - Check interval in seconds
+    pub fn enable_memory_pressure_monitoring(
+        &mut self,
+        some_threshold_warning: f64,
+        some_threshold_critical: f64,
+        full_threshold_warning: f64,
+        full_threshold_critical: f64,
+        action_warning: String,
+        action_critical: String,
+        check_interval_secs: u64,
+    ) {
+        self.memory_pressure_enabled = true;
+        self.memory_pressure_some_threshold_warning = some_threshold_warning;
+        self.memory_pressure_some_threshold_critical = some_threshold_critical;
+        self.memory_pressure_full_threshold_warning = full_threshold_warning;
+        self.memory_pressure_full_threshold_critical = full_threshold_critical;
+        self.memory_pressure_action_warning = action_warning.clone();
+        self.memory_pressure_action_critical = action_critical.clone();
+        self.memory_pressure_check_interval = Duration::from_secs(check_interval_secs);
+        info!(
+            "Memory pressure monitoring enabled: some {:.1}%/{:.1}%, full {:.1}%/{:.1}%, actions: {}/{}",
+            some_threshold_warning, some_threshold_critical,
+            full_threshold_warning, full_threshold_critical,
+            action_warning, action_critical
+        );
+    }
+
     /// Perform single monitoring check
     ///
     /// This is the main monitoring loop that:
@@ -320,6 +383,18 @@ impl ResourceMonitor {
         if self.telegram_enabled {
             if let Err(e) = self.check_telegram_processes() {
                 error!("Telegram monitoring error: {}", e);
+            }
+        }
+
+        // Monitor memory pressure (PSI)
+        if self.memory_pressure_enabled {
+            // Check if enough time has passed since last check
+            let now = Instant::now();
+            if now.duration_since(self.memory_pressure_last_check) >= self.memory_pressure_check_interval {
+                if let Err(e) = self.check_memory_pressure() {
+                    error!("Memory pressure monitoring error: {}", e);
+                }
+                self.memory_pressure_last_check = now;
             }
         }
 
@@ -990,6 +1065,265 @@ impl ResourceMonitor {
                 Some((process.cpu_percent, memory_mb))
             }
             Ok(None) => None,
+            Err(_) => None,
+        }
+    }
+
+    /// Monitor memory pressure (PSI - Pressure Stall Information)
+    ///
+    /// Reads /proc/pressure/memory and takes proactive actions based on thresholds
+    fn check_memory_pressure(&mut self) -> Result<()> {
+        // Read current memory pressure
+        let pressure = match MemoryPressure::read() {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("Failed to read memory pressure: {}", e);
+                return Ok(()); // Don't fail monitoring on PSI read error
+            }
+        };
+
+        debug!(
+            "Memory pressure: some {:.2}%, full {:.2}%",
+            pressure.some_avg10, pressure.full_avg10
+        );
+
+        // Check if pressure is at critical level
+        if pressure.is_critical(
+            self.memory_pressure_some_threshold_critical,
+            self.memory_pressure_full_threshold_critical,
+        ) {
+            self.memory_pressure_critical_count += 1;
+            warn!(
+                "CRITICAL memory pressure detected! some={:.2}%, full={:.2}% (thresholds: some={:.1}%, full={:.1}%)",
+                pressure.some_avg10,
+                pressure.full_avg10,
+                self.memory_pressure_some_threshold_critical,
+                self.memory_pressure_full_threshold_critical
+            );
+
+            // Execute critical action
+            self.execute_memory_pressure_action(&self.memory_pressure_action_critical.clone(), "CRITICAL")?;
+        }
+        // Check if pressure is at warning level
+        else if pressure.is_warning(
+            self.memory_pressure_some_threshold_warning,
+            self.memory_pressure_full_threshold_warning,
+        ) {
+            self.memory_pressure_warning_count += 1;
+            warn!(
+                "WARNING memory pressure detected! some={:.2}%, full={:.2}% (thresholds: some={:.1}%, full={:.1}%)",
+                pressure.some_avg10,
+                pressure.full_avg10,
+                self.memory_pressure_some_threshold_warning,
+                self.memory_pressure_full_threshold_warning
+            );
+
+            // Execute warning action
+            self.execute_memory_pressure_action(&self.memory_pressure_action_warning.clone(), "WARNING")?;
+        } else {
+            // No pressure detected - reset counters
+            if self.memory_pressure_warning_count > 0 || self.memory_pressure_critical_count > 0 {
+                debug!("Memory pressure normalized (some={:.2}%, full={:.2}%)",
+                    pressure.some_avg10, pressure.full_avg10);
+                self.memory_pressure_warning_count = 0;
+                self.memory_pressure_critical_count = 0;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Execute action based on memory pressure level
+    fn execute_memory_pressure_action(&mut self, action: &str, level: &str) -> Result<()> {
+        match action {
+            "log" => {
+                info!("[Memory Pressure {}] Logging event", level);
+                // Already logged in check_memory_pressure
+                Ok(())
+            }
+            "nice" => {
+                info!("[Memory Pressure {}] Applying nice to non-critical processes", level);
+                // Nice down non-critical processes (Firefox, Brave, Telegram)
+                self.nice_non_critical_processes()
+            }
+            "freeze" => {
+                info!("[Memory Pressure {}] Freezing non-critical processes", level);
+                // Freeze non-critical processes temporarily
+                self.freeze_non_critical_processes()
+            }
+            "kill" => {
+                warn!("[Memory Pressure {}] Killing non-critical processes", level);
+                // Kill non-critical processes (most aggressive)
+                self.kill_non_critical_processes()
+            }
+            _ => {
+                warn!("Unknown memory pressure action: {}", action);
+                Ok(())
+            }
+        }
+    }
+
+    /// Lower priority of non-critical processes
+    fn nice_non_critical_processes(&mut self) -> Result<()> {
+        let mut niced_count = 0;
+
+        // Nice Firefox processes
+        if let Ok(processes) = self.scanner.scan_firefox_processes() {
+            for process in processes {
+                if let Ok(()) = ProcessExecutor::renice_process(process.pid, 15) {
+                    info!("Niced Firefox process {} to priority 15", process.pid);
+                    niced_count += 1;
+                }
+            }
+        }
+
+        // Nice Brave processes
+        if let Ok(processes) = self.scanner.scan_brave_processes() {
+            for process in processes {
+                if let Ok(()) = ProcessExecutor::renice_process(process.pid, 15) {
+                    info!("Niced Brave process {} to priority 15", process.pid);
+                    niced_count += 1;
+                }
+            }
+        }
+
+        // Nice Telegram processes
+        if let Ok(processes) = self.scanner.scan_telegram_processes() {
+            for process in processes {
+                if let Ok(()) = ProcessExecutor::renice_process(process.pid, 15) {
+                    info!("Niced Telegram process {} to priority 15", process.pid);
+                    niced_count += 1;
+                }
+            }
+        }
+
+        info!("Memory pressure: niced {} non-critical processes", niced_count);
+        Ok(())
+    }
+
+    /// Freeze non-critical processes temporarily (5 seconds)
+    fn freeze_non_critical_processes(&mut self) -> Result<()> {
+        let mut frozen_count = 0;
+
+        // Freeze Firefox
+        if let Ok(processes) = self.scanner.scan_firefox_processes() {
+            for process in processes {
+                if let Ok(()) = ProcessExecutor::freeze_process(process.pid) {
+                    info!("Froze Firefox process {}", process.pid);
+                    frozen_count += 1;
+                }
+            }
+        }
+
+        // Freeze Brave
+        if let Ok(processes) = self.scanner.scan_brave_processes() {
+            for process in processes {
+                if let Ok(()) = ProcessExecutor::freeze_process(process.pid) {
+                    info!("Froze Brave process {}", process.pid);
+                    frozen_count += 1;
+                }
+            }
+        }
+
+        // Freeze Telegram
+        if let Ok(processes) = self.scanner.scan_telegram_processes() {
+            for process in processes {
+                if let Ok(()) = ProcessExecutor::freeze_process(process.pid) {
+                    info!("Froze Telegram process {}", process.pid);
+                    frozen_count += 1;
+                }
+            }
+        }
+
+        info!("Memory pressure: froze {} non-critical processes for {} seconds",
+            frozen_count, 5);
+
+        // Unfreeze after 5 seconds
+        std::thread::sleep(std::time::Duration::from_secs(5));
+
+        // Unfreeze all
+        let mut unfrozen_count = 0;
+        if let Ok(processes) = self.scanner.scan_firefox_processes() {
+            for process in processes {
+                if let Ok(()) = ProcessExecutor::unfreeze_process(process.pid) {
+                    unfrozen_count += 1;
+                }
+            }
+        }
+        if let Ok(processes) = self.scanner.scan_brave_processes() {
+            for process in processes {
+                if let Ok(()) = ProcessExecutor::unfreeze_process(process.pid) {
+                    unfrozen_count += 1;
+                }
+            }
+        }
+        if let Ok(processes) = self.scanner.scan_telegram_processes() {
+            for process in processes {
+                if let Ok(()) = ProcessExecutor::unfreeze_process(process.pid) {
+                    unfrozen_count += 1;
+                }
+            }
+        }
+
+        info!("Memory pressure: unfroze {} processes", unfrozen_count);
+        Ok(())
+    }
+
+    /// Kill non-critical processes (most aggressive action)
+    fn kill_non_critical_processes(&mut self) -> Result<()> {
+        let mut killed_count = 0;
+
+        // Kill Firefox
+        if let Ok(processes) = self.scanner.scan_firefox_processes() {
+            for process in processes {
+                warn!("Killing Firefox process {} due to critical memory pressure", process.pid);
+                if let Ok(()) = ProcessExecutor::kill_process(process.pid) {
+                    killed_count += 1;
+                }
+            }
+        }
+
+        // Kill Brave
+        if let Ok(processes) = self.scanner.scan_brave_processes() {
+            for process in processes {
+                warn!("Killing Brave process {} due to critical memory pressure", process.pid);
+                if let Ok(()) = ProcessExecutor::kill_process(process.pid) {
+                    killed_count += 1;
+                }
+            }
+        }
+
+        // Kill Telegram
+        if let Ok(processes) = self.scanner.scan_telegram_processes() {
+            for process in processes {
+                warn!("Killing Telegram process {} due to critical memory pressure", process.pid);
+                if let Ok(()) = ProcessExecutor::kill_process(process.pid) {
+                    killed_count += 1;
+                }
+            }
+        }
+
+        warn!("Memory pressure: killed {} non-critical processes", killed_count);
+        Ok(())
+    }
+
+    /// Get current memory pressure status (for dashboard)
+    pub fn get_memory_pressure_status(&self) -> Option<(f64, f64, String, u32, u32)> {
+        if !self.memory_pressure_enabled {
+            return None;
+        }
+
+        match MemoryPressure::read() {
+            Ok(pressure) => {
+                let status = pressure.status().to_string();
+                Some((
+                    pressure.some_avg10,
+                    pressure.full_avg10,
+                    status,
+                    self.memory_pressure_warning_count,
+                    self.memory_pressure_critical_count,
+                ))
+            }
             Err(_) => None,
         }
     }

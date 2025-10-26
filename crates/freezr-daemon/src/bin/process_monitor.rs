@@ -295,6 +295,16 @@ fn display_startup_banner(config: &Config) {
               config.telegram.cpu_threshold_freeze, config.telegram.cpu_threshold_kill);
     }
 
+    if config.memory_pressure.enabled {
+        info!("   └─ Memory Pressure: some {:.1}%/{:.1}%, full {:.1}%/{:.1}% ({}|{})",
+              config.memory_pressure.some_threshold_warning,
+              config.memory_pressure.some_threshold_critical,
+              config.memory_pressure.full_threshold_warning,
+              config.memory_pressure.full_threshold_critical,
+              config.memory_pressure.action_warning,
+              config.memory_pressure.action_critical);
+    }
+
     info!("   └─ Check interval: {}s", config.monitoring.check_interval_secs);
     info!("");
 }
@@ -365,6 +375,18 @@ async fn run_with_stats(config: Config, report_interval: u64) -> Result<()> {
             config.telegram.freeze_duration_secs,
             config.telegram.max_violations_freeze,
             config.telegram.max_violations_kill,
+        );
+    }
+
+    if config.memory_pressure.enabled {
+        monitor.enable_memory_pressure_monitoring(
+            config.memory_pressure.some_threshold_warning,
+            config.memory_pressure.some_threshold_critical,
+            config.memory_pressure.full_threshold_warning,
+            config.memory_pressure.full_threshold_critical,
+            config.memory_pressure.action_warning.clone(),
+            config.memory_pressure.action_critical.clone(),
+            config.memory_pressure.check_interval_secs,
         );
     }
 
@@ -456,6 +478,21 @@ async fn run_with_stats(config: Config, report_interval: u64) -> Result<()> {
                 if config.telegram.enabled {
                     println!("   ✈️  Telegram: Freeze@{:.1}%, Kill@{:.1}%",
                              config.telegram.cpu_threshold_freeze, config.telegram.cpu_threshold_kill);
+                }
+
+                // Memory pressure status
+                if config.memory_pressure.enabled {
+                    if let Some((some_avg, full_avg, status, warn_count, crit_count)) = monitor.get_memory_pressure_status() {
+                        let status_icon = match status.as_str() {
+                            "CRITICAL" => "🔴",
+                            "HIGH" => "🟠",
+                            "MEDIUM" => "🟡",
+                            "LOW" => "🟢",
+                            _ => "⚪",
+                        };
+                        println!("   {} Memory Pressure: {} (some: {:.1}%, full: {:.1}%, w:{}/c:{})",
+                                 status_icon, status, some_avg, full_avg, warn_count, crit_count);
+                    }
                 }
                 println!();
 
