@@ -306,8 +306,6 @@ async fn run_with_stats(config: Config, report_interval: u64) -> Result<()> {
     let mut report_timer = interval(Duration::from_secs(report_interval));
 
     let start_time = std::time::Instant::now();
-    let mut last_kesl_cpu = 0.0;
-    let mut last_kesl_mem = 0u64;
 
     // Wait 3 seconds before first dashboard render
     sleep(Duration::from_secs(3)).await;
@@ -344,9 +342,13 @@ async fn run_with_stats(config: Config, report_interval: u64) -> Result<()> {
                 println!("╔═══════════════════════════════════════════════════════════╗");
                 println!("║                    KESL Process Status                    ║");
                 println!("╚═══════════════════════════════════════════════════════════╝");
-                println!("   PID: 1546 (example)");
-                println!("   CPU: {:.1}% (threshold: {:.1}%)", last_kesl_cpu, config.kesl.cpu_threshold);
-                println!("   Memory: {}MB (threshold: {}MB)", last_kesl_mem, config.kesl.memory_threshold_mb);
+
+                // Get current KESL status from monitor
+                let (kesl_cpu, kesl_mem) = monitor.get_kesl_status().unwrap_or((0.0, 0));
+
+                println!("   PID: {} (current)", if kesl_cpu > 0.0 { "detected" } else { "not found" });
+                println!("   CPU: {:.1}% (threshold: {:.1}%)", kesl_cpu, config.kesl.cpu_threshold);
+                println!("   Memory: {}MB (threshold: {}MB)", kesl_mem, config.kesl.memory_threshold_mb);
                 println!();
 
                 // Violations summary

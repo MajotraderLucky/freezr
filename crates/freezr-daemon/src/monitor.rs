@@ -793,6 +793,19 @@ impl ResourceMonitor {
         self.memory_violations = 0;
         debug!("Violation counters manually reset");
     }
+
+    /// Get current KESL CPU and memory status
+    /// Returns (cpu_percent, memory_mb)
+    pub fn get_kesl_status(&self) -> Option<(f64, u64)> {
+        match self.scanner.scan_kesl() {
+            Ok(Some(process)) => {
+                let memory_mb = process.memory_kb / 1024;
+                Some((process.cpu_percent, memory_mb))
+            }
+            Ok(None) => None,
+            Err(_) => None,
+        }
+    }
 }
 
 #[cfg(test)]
