@@ -40,10 +40,24 @@ Complete guide for service and dashboard modes:
 
 **Essential for understanding the new dashboard viewer!**
 
+### [Shell Aliases](ALIASES.md)
+Bash aliases for quick access:
+- keslwatchR - Start monitoring service
+- keslwatchRmon - Start dashboard viewer
+- Alias installation and usage
+- Integration with .bashrc
+
+### [Process Monitor Summary](PROCESS_MONITOR_SUMMARY.md)
+Quick overview and comparison:
+- Feature comparison with bash scripts
+- Performance metrics
+- Quick reference
+
 ## Quick Links
 
 - [Installation →](getting-started.md#installation)
 - [Quick Start →](getting-started.md#quick-start)
 - [Configuration →](getting-started.md#configuration)
 - [Troubleshooting →](getting-started.md#troubleshooting)
+- [Technical Docs →](../technical/README.md)
 - [← Back to Main Docs](../README.md)

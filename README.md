@@ -257,9 +257,8 @@ source ~/.bashrc
 
 - 📖 **[Dashboard Guide](docs/user-guide/DASHBOARD.md)** - Service + Dashboard architecture ⭐ NEW
 - 📋 **[User Guide](docs/user-guide/README.md)** - Getting started, usage, troubleshooting
-- 🔧 **[Systemd Service](docs/technical/SYSTEMD_SERVICE.md)** - Service installation and management
-- 💾 **[Memory Pressure](docs/technical/MEMORY_PRESSURE.md)** - PSI-based OOM prevention
-- 📦 **[Snap Monitoring](SNAP_MONITORING.md)** - Snap/snapd process management
+- 🔧 **[Technical Docs](docs/technical/README.md)** - Systemd, Memory Pressure, Snap monitoring, Logs
+- 👨‍💻 **[Development Docs](docs/development/README.md)** - Architecture, contributing, ML roadmap
 
 ---
 

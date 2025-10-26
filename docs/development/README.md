@@ -36,6 +36,25 @@ Version history and release notes.
 ### [GitHub Description](GITHUB_DESCRIPTION.md)
 Project description and marketing content for GitHub.
 
+### [ML Process Analytics](ML_PROCESS_ANALYTICS.md)
+Machine learning roadmap for process prediction:
+- Pattern recognition goals
+- Anomaly detection
+- Historical data collection
+- LSTM model planning
+
+### [Implementation Summaries](IMPLEMENTATION_SUMMARY.md)
+Detailed implementation notes:
+- Feature implementation details
+- Technical decisions
+- Testing results
+
+### [Snap Implementation](SNAP_IMPLEMENTATION_SUMMARY.md)
+Snap/snapd monitoring implementation:
+- Multi-core CPU detection
+- Nice action implementation
+- Violation tracking
+
 ## Project Structure
 
 ```
