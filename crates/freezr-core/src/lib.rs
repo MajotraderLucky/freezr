@@ -3,6 +3,7 @@
 //! Core library for FreezR - intelligent system resource guardian.
 //! Provides process scanning, systemd service management, and resource monitoring.
 
+pub mod cgroups;
 pub mod error;
 pub mod executor;
 pub mod memory_pressure;
@@ -11,6 +12,11 @@ pub mod scanner;
 pub mod systemd;
 pub mod types;
 
+pub use cgroups::{
+    Cgroup, CgroupConfig, CgroupError as CgroupErr, CgroupManager, CgroupStrategy, CgroupType,
+    CpuController, CpuStats, DynamicCgroupSettings, HealthStatus, MemoryController,
+    MemoryPressure as CgroupMemoryPressure, MemoryStats, ResourceLimits, StaticCgroupConfig,
+};
 pub use error::{Error, Result};
 pub use executor::ProcessExecutor;
 pub use memory_pressure::MemoryPressure;
