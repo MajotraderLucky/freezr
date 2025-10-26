@@ -5,6 +5,7 @@ use freezr_core::{
     scanner::ProcessScanner,
     systemd::SystemdService,
     types::MonitorStats,
+    CgroupManager,
 };
 use tracing::{debug, error, info, warn};
 use std::time::{Duration, Instant};
@@ -17,6 +18,9 @@ pub struct ResourceMonitor {
     scanner: ProcessScanner,
     kesl_service: SystemdService,
     stats: MonitorStats,
+
+    // Cgroup integration (optional)
+    cgroup_manager: Option<CgroupManager>,
 
     // Violation counters
     cpu_violations: u32,
@@ -109,6 +113,7 @@ impl ResourceMonitor {
             scanner: ProcessScanner::new(),
             kesl_service: SystemdService::new(service_name),
             stats: MonitorStats::new(),
+            cgroup_manager: None,  // Initialized later if enabled
 
             cpu_violations: 0,
             memory_violations: 0,
@@ -169,6 +174,28 @@ impl ResourceMonitor {
             memory_pressure_warning_count: 0,
             memory_pressure_critical_count: 0,
         }
+    }
+
+    /// Initialize cgroup manager (call after construction if enabled)
+    pub fn initialize_cgroups(&mut self, config: freezr_core::CgroupConfig) -> Result<()> {
+        if !config.enabled {
+            return Ok(());
+        }
+
+        let mut manager = CgroupManager::new(config)?;
+        manager.initialize()?;
+
+        info!("Cgroup integration initialized");
+        self.cgroup_manager = Some(manager);
+        Ok(())
+    }
+
+    /// Cleanup cgroups on shutdown
+    pub fn cleanup_cgroups(&mut self) -> Result<()> {
+        if let Some(manager) = &mut self.cgroup_manager {
+            manager.on_service_stop()?;
+        }
+        Ok(())
     }
 
     /// Enable Node.js process monitoring

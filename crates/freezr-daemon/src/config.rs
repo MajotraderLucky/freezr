@@ -1,3 +1,4 @@
+use freezr_core::CgroupConfig;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -11,19 +12,28 @@ pub struct Config {
     pub node: NodeConfig,
 
     /// Snap/snapd monitoring configuration
+    #[serde(default)]
     pub snap: SnapConfig,
 
     /// Firefox monitoring configuration
+    #[serde(default)]
     pub firefox: FirefoxConfig,
 
     /// Brave browser monitoring configuration
+    #[serde(default)]
     pub brave: BraveConfig,
 
     /// Telegram messenger monitoring configuration
+    #[serde(default)]
     pub telegram: TelegramConfig,
 
     /// Memory pressure monitoring configuration
+    #[serde(default)]
     pub memory_pressure: MemoryPressureConfig,
+
+    /// Cgroup v2 integration configuration
+    #[serde(default)]
+    pub cgroups: CgroupConfig,
 
     /// Logging configuration
     pub logging: LogConfig,
@@ -244,6 +254,7 @@ impl Default for Config {
             brave: BraveConfig::default(),
             telegram: TelegramConfig::default(),
             memory_pressure: MemoryPressureConfig::default(),
+            cgroups: CgroupConfig::default(),
             logging: LogConfig::default(),
             monitoring: MonitoringConfig::default(),
         }

@@ -17,6 +17,9 @@ pub enum Error {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("Cgroup error: {0}")]
+    Cgroup(#[from] crate::cgroups::CgroupError),
+
     #[error("Other error: {0}")]
     Other(String),
 }
