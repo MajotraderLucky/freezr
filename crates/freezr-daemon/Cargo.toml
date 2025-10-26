@@ -13,6 +13,7 @@ description = "System daemon for FreezR - prevents system freezes by managing ru
 freezr-core = { path = "../freezr-core" }
 tokio = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 toml = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }

@@ -27,6 +27,19 @@ Detailed usage instructions including:
 
 **Recommended for daily usage reference.**
 
+### [Dashboard Guide](DASHBOARD.md) ⭐ NEW
+Complete guide for service and dashboard modes:
+- Service mode (monitoring + actions)
+- Dashboard mode (read-only viewer)
+- Architecture and separation of concerns
+- Using bash aliases (keslwatchR, keslwatchRmon)
+- Systemd service management
+- Stats export and JSON format
+- Usage scenarios (development, production)
+- Troubleshooting dashboard issues
+
+**Essential for understanding the new dashboard viewer!**
+
 ## Quick Links
 
 - [Installation →](getting-started.md#installation)

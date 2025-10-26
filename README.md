@@ -191,12 +191,34 @@ freezr export --format json --output report.json
 # Build
 cargo build --release --bin process-monitor
 
-# Standard monitoring
-./target/release/process-monitor
-
-# Extended statistics (recommended for production)
+# Service mode: monitoring + actions + stats export
 ./target/release/process-monitor --stats --report-interval 60
+
+# Dashboard mode: read-only viewer (run in separate terminal)
+./target/release/process-monitor dashboard --interval 3
+
+# Using bash aliases (recommended)
+keslwatchR      # Start service (monitoring + actions)
+keslwatchRmon   # Start dashboard (viewer)
 ```
+
+### Service + Dashboard Architecture
+
+FreezR now supports **separation of concerns** between monitoring and viewing:
+
+```
+Service Mode                    Dashboard Mode
+  (background)                    (terminal)
+      ↓                               ↑
+   Monitor     →    Stats JSON    →  Viewer
+   Actions          /tmp/          Read-only
+                    freezr-
+                    stats.json
+```
+
+- **Service**: Runs continuously, performs monitoring, takes actions, exports stats
+- **Dashboard**: Lightweight viewer, reads stats, no monitoring overhead
+- **No conflicts**: Both can run in parallel safely
 
 ### Example Statistics Report
 
@@ -217,17 +239,27 @@ cargo build --release --bin process-monitor
 
 ```bash
 # Add to ~/.bashrc
-alias procmonR='cd /path/to/freezr && ./target/release/process-monitor'
-alias procmonStatsR='cd /path/to/freezr && ./target/release/process-monitor --stats --report-interval 60'
-alias procmonLogsR='tail -f /path/to/freezr/logs/process_monitor.log.$(date +%Y-%m-%d)'
+
+# Service mode (monitoring + actions)
+alias keslwatchR='cd /path/to/freezr && ./target/release/process-monitor --config freezr.toml --stats --report-interval 60'
+
+# Dashboard mode (read-only viewer) ⭐ NEW
+alias keslwatchRmon='cd /path/to/freezr && ./target/release/process-monitor dashboard --interval 3'
+
+# View logs
+alias freezr-logs='tail -f /path/to/freezr/logs/process-monitor.log.$(date +%Y-%m-%d)'
+
+# Apply changes
+source ~/.bashrc
 ```
 
 ### Documentation
 
-- 📖 **[Process Monitor Guide](docs/PROCESS_MONITOR_GUIDE.md)** - Complete documentation
-- 📋 **[Usage Examples](docs/examples/PROCESS_MONITOR_EXAMPLES.md)** - Real-world scenarios
-- 📊 **[Quick Summary](PROCESS_MONITOR_SUMMARY.md)** - Overview and comparison
-- 📦 **[Snap Monitoring](SNAP_MONITORING.md)** - Snap/snapd process management (NEW)
+- 📖 **[Dashboard Guide](docs/user-guide/DASHBOARD.md)** - Service + Dashboard architecture ⭐ NEW
+- 📋 **[User Guide](docs/user-guide/README.md)** - Getting started, usage, troubleshooting
+- 🔧 **[Systemd Service](docs/technical/SYSTEMD_SERVICE.md)** - Service installation and management
+- 💾 **[Memory Pressure](docs/technical/MEMORY_PRESSURE.md)** - PSI-based OOM prevention
+- 📦 **[Snap Monitoring](SNAP_MONITORING.md)** - Snap/snapd process management
 
 ---
 

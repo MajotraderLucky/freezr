@@ -50,6 +50,13 @@ enum Commands {
 
     /// Show systemd service status
     ServiceStatus,
+
+    /// Show live monitoring dashboard (read-only)
+    Dashboard {
+        /// Update interval in seconds
+        #[arg(short, long, default_value = "3")]
+        interval: u64,
+    },
 }
 
 /// Ensure required directories exist and are writable
@@ -335,6 +342,16 @@ fn display_startup_banner(config: &Config) {
 }
 
 /// Clear screen and move cursor to top
+/// Export statistics to JSON file for dashboard consumption
+fn export_stats_to_file(stats: &freezr_daemon::MonitorStats) -> Result<()> {
+    const STATS_FILE: &str = "/tmp/freezr-stats.json";
+
+    let json = serde_json::to_string_pretty(stats)?;
+    std::fs::write(STATS_FILE, json)?;
+
+    Ok(())
+}
+
 fn clear_screen() {
     print!("\x1B[2J\x1B[1;1H");
     use std::io::{self, Write};
@@ -430,6 +447,13 @@ async fn run_with_stats(config: Config, report_interval: u64) -> Result<()> {
                 if let Err(e) = monitor.check() {
                     // Only log errors to file, not stdout
                     tracing::error!("Monitoring check failed: {}", e);
+                }
+
+                // Export stats to file for dashboard
+                let uptime = start_time.elapsed().as_secs();
+                let stats = monitor.export_stats(uptime);
+                if let Err(e) = export_stats_to_file(&stats) {
+                    tracing::error!("Failed to export stats: {}", e);
                 }
             }
             _ = report_timer.tick() => {
@@ -591,6 +615,7 @@ async fn handle_subcommand(command: &Commands) -> Result<()> {
         Commands::InstallService { yes } => install_systemd_service(*yes),
         Commands::UninstallService { yes } => uninstall_systemd_service(*yes),
         Commands::ServiceStatus => show_service_status(),
+        Commands::Dashboard { interval } => show_dashboard(*interval).await,
     }
 }
 
@@ -862,6 +887,149 @@ fn uninstall_systemd_service(skip_confirm: bool) -> Result<()> {
     println!("✅ FreezR service uninstalled successfully");
 
     Ok(())
+}
+
+/// Show live monitoring dashboard (read-only)
+async fn show_dashboard(interval_secs: u64) -> Result<()> {
+    use freezr_daemon::MonitorStats;
+    use std::fs;
+    use std::io::{self, Write};
+    use std::time::Duration;
+    use tokio::time;
+
+    const STATS_FILE: &str = "/tmp/freezr-stats.json";
+
+    println!("╔═══════════════════════════════════════════════════════════╗");
+    println!("║       FreezR Live Dashboard (Read-Only Mode)             ║");
+    println!("╚═══════════════════════════════════════════════════════════╝");
+    println!();
+    println!("📡 Reading stats from: {}", STATS_FILE);
+    println!("🔄 Update interval: {} seconds", interval_secs);
+    println!("Press Ctrl+C to exit");
+    println!();
+
+    let mut interval = time::interval(Duration::from_secs(interval_secs));
+
+    loop {
+        interval.tick().await;
+
+        // Read stats from JSON file
+        let stats: MonitorStats = match fs::read_to_string(STATS_FILE) {
+            Ok(content) => match serde_json::from_str(&content) {
+                Ok(s) => s,
+                Err(e) => {
+                    println!("⚠️  Failed to parse stats: {}", e);
+                    println!("   Waiting for service to write stats...");
+                    continue;
+                }
+            },
+            Err(e) => {
+                println!("⚠️  Stats file not found: {}", e);
+                println!("   Is the FreezR service running?");
+                println!("   Start with: sudo systemctl start freezr");
+                println!();
+                time::sleep(Duration::from_secs(2)).await;
+                continue;
+            }
+        };
+
+        // Clear screen and display dashboard
+        print!("\x1B[2J\x1B[1;1H"); // Clear screen and move cursor to top
+        io::stdout().flush()?;
+
+        // Header
+        println!("╔═══════════════════════════════════════════════════════════╗");
+        println!("║          FreezR Process Monitor - Live Dashboard         ║");
+        println!("╚═══════════════════════════════════════════════════════════╝");
+        println!();
+
+        // Runtime
+        let hours = stats.runtime_secs / 3600;
+        let minutes = (stats.runtime_secs % 3600) / 60;
+        let seconds = stats.runtime_secs % 60;
+        println!("📈 Runtime: {}h {}m {}s", hours, minutes, seconds);
+        println!("📊 Total checks: {} (every 3s)", stats.total_checks);
+        println!();
+
+        // KESL Status
+        println!("╔═══════════════════════════════════════════════════════════╗");
+        println!("║                    KESL Process Status                    ║");
+        println!("╚═══════════════════════════════════════════════════════════╝");
+        if let Some(pid) = stats.kesl.pid {
+            println!("   PID: {} (current)", pid);
+        } else {
+            println!("   PID: not found (current)");
+        }
+        println!("   CPU: {:.1}% (threshold: {:.1}%)", stats.kesl.cpu_percent, stats.kesl.cpu_threshold);
+        println!("   Memory: {}MB (threshold: {}MB)", stats.kesl.memory_mb, stats.kesl.memory_threshold_mb);
+        println!();
+
+        // Violations Summary
+        println!("╔═══════════════════════════════════════════════════════════╗");
+        println!("║                   Violations Summary                      ║");
+        println!("╚═══════════════════════════════════════════════════════════╝");
+        println!("   Total:");
+        println!("      CPU violations: {}", stats.kesl.total_cpu_violations);
+        println!("      Memory violations: {}", stats.kesl.total_memory_violations);
+        println!("   Current session:");
+        println!("      CPU: {} (need {} for restart)", stats.kesl.current_cpu_violations, stats.kesl.max_violations);
+        println!("      Memory: {} (need {} for restart)", stats.kesl.current_memory_violations, stats.kesl.max_violations);
+        if stats.total_checks > 0 {
+            println!("   Violation rate: {:.2}%", stats.kesl.violation_rate);
+        }
+        println!();
+
+        // Actions Summary
+        println!("╔═══════════════════════════════════════════════════════════╗");
+        println!("║                    Actions Summary                        ║");
+        println!("╚═══════════════════════════════════════════════════════════╝");
+        println!("   🔄 KESL restarts: {}", stats.kesl.total_restarts);
+        println!("   🔪 Node.js kills: {}", stats.node.total_kills);
+        println!("   ⚡ Snap actions: {} ({})", stats.snap.total_actions, stats.snap.action);
+        println!("   🦊 Firefox: Freeze@{:.1}%, Kill@{:.1}%", stats.firefox.freeze_threshold, stats.firefox.kill_threshold);
+        println!("   🦁 Brave: Freeze@{:.1}%, Kill@{:.1}%", stats.brave.freeze_threshold, stats.brave.kill_threshold);
+        println!("   ✈️  Telegram: Freeze@{:.1}%, Kill@{:.1}%", stats.telegram.freeze_threshold, stats.telegram.kill_threshold);
+
+        // Memory Pressure
+        let mp_icon = match stats.memory_pressure.status.as_str() {
+            "CRITICAL" => "🔴",
+            "HIGH" => "🟠",
+            "MEDIUM" => "🟡",
+            "LOW" => "🟢",
+            _ => "⚪",
+        };
+        println!("   {} Memory Pressure: {} (some: {:.1}%, full: {:.1}%, w:{}/c:{})",
+            mp_icon,
+            stats.memory_pressure.status,
+            stats.memory_pressure.some_avg10,
+            stats.memory_pressure.full_avg10,
+            stats.memory_pressure.warning_count,
+            stats.memory_pressure.critical_count
+        );
+        println!();
+
+        // System Health
+        println!("╔═══════════════════════════════════════════════════════════╗");
+        println!("║                     System Health                         ║");
+        println!("╚═══════════════════════════════════════════════════════════╝");
+        println!("   Load: {:.2}, Memory: {:.1}% used",
+            stats.system_health.load_1min,
+            stats.system_health.memory_used_percent
+        );
+        println!();
+
+        // Log Statistics
+        println!("╔═══════════════════════════════════════════════════════════╗");
+        println!("║                    Log Statistics                         ║");
+        println!("╚═══════════════════════════════════════════════════════════╝");
+        println!("   📄 Active logs: {} files ({})", stats.log_stats.active_files, stats.log_stats.active_size);
+        println!("   🗜️  Archive logs: {} files ({})", stats.log_stats.archive_files, stats.log_stats.archive_size);
+        println!("   📊 Retention: 7 days active, 30 days archived");
+        println!();
+
+        println!("Press Ctrl+C to stop monitoring");
+        println!("Next refresh in {}s...", interval_secs);
+    }
 }
 
 /// Show systemd service status

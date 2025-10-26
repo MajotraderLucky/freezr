@@ -1069,6 +1069,171 @@ impl ResourceMonitor {
         }
     }
 
+    /// Export complete statistics for dashboard
+    ///
+    /// Creates a comprehensive stats snapshot including all monitored processes,
+    /// violations, actions, system health, and memory pressure
+    pub fn export_stats(&self, runtime_secs: u64) -> crate::stats::MonitorStats {
+        use crate::stats::*;
+
+        // Get current KESL status
+        let (kesl_cpu, kesl_mem) = self.get_kesl_status().unwrap_or((0.0, 0));
+        let kesl_pid = self.scanner.scan_kesl().ok().flatten().map(|p| p.pid);
+
+        // Read memory pressure (if enabled)
+        let (mp_some, mp_full, mp_status) = if self.memory_pressure_enabled {
+            match freezr_core::memory_pressure::MemoryPressure::read() {
+                Ok(pressure) => {
+                    let status = if pressure.full_avg10 >= self.memory_pressure_full_threshold_critical {
+                        "CRITICAL".to_string()
+                    } else if pressure.some_avg10 >= self.memory_pressure_some_threshold_critical {
+                        "WARNING".to_string()
+                    } else {
+                        "OK".to_string()
+                    };
+                    (pressure.some_avg10, pressure.full_avg10, status)
+                }
+                Err(_) => (0.0, 0.0, "UNKNOWN".to_string()),
+            }
+        } else {
+            (0.0, 0.0, "DISABLED".to_string())
+        };
+
+        // Read system load and memory
+        let (load_1, load_5, load_15) = if let Ok(content) = std::fs::read_to_string("/proc/loadavg") {
+            let parts: Vec<&str> = content.split_whitespace().collect();
+            if parts.len() >= 3 {
+                (
+                    parts[0].parse().unwrap_or(0.0),
+                    parts[1].parse().unwrap_or(0.0),
+                    parts[2].parse().unwrap_or(0.0),
+                )
+            } else {
+                (0.0, 0.0, 0.0)
+            }
+        } else {
+            (0.0, 0.0, 0.0)
+        };
+
+        let (mem_total, mem_available, mem_used_pct) = if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
+            let mut total_kb = 0u64;
+            let mut available_kb = 0u64;
+            for line in content.lines() {
+                if line.starts_with("MemTotal:") {
+                    total_kb = line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                } else if line.starts_with("MemAvailable:") {
+                    available_kb = line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                }
+            }
+            let total_mb = total_kb / 1024;
+            let available_mb = available_kb / 1024;
+            let used_pct = if total_kb > 0 {
+                ((total_kb - available_kb) as f64 / total_kb as f64) * 100.0
+            } else {
+                0.0
+            };
+            (total_mb, available_mb, used_pct)
+        } else {
+            (0, 0, 0.0)
+        };
+
+        // Log statistics
+        let log_stats = LogStats::default(); // TODO: Implement log directory scanning
+
+        MonitorStats {
+            timestamp: MonitorStats::current_timestamp(),
+            runtime_secs,
+            total_checks: self.stats.total_checks,
+            kesl: ProcessStats {
+                pid: kesl_pid,
+                cpu_percent: kesl_cpu,
+                memory_mb: kesl_mem,
+                cpu_threshold: self.cpu_threshold,
+                memory_threshold_mb: self.memory_threshold_mb,
+                total_cpu_violations: self.stats.cpu_violations,
+                total_memory_violations: self.stats.memory_violations,
+                current_cpu_violations: self.cpu_violations,
+                current_memory_violations: self.memory_violations,
+                max_violations: self.max_violations,
+                violation_rate: if self.stats.total_checks > 0 {
+                    ((self.stats.cpu_violations + self.stats.memory_violations) as f64 / self.stats.total_checks as f64) * 100.0
+                } else {
+                    0.0
+                },
+                total_restarts: self.stats.total_restarts as u32,
+            },
+            node: NodeStats {
+                enabled: self.node_enabled,
+                cpu_threshold: self.node_cpu_threshold,
+                auto_kill: self.node_auto_kill,
+                total_kills: self.stats.total_kills as u32,
+            },
+            snap: SnapStats {
+                enabled: self.snap_enabled,
+                cpu_threshold: self.snap_cpu_threshold,
+                action: self.snap_action.clone(),
+                nice_level: self.snap_nice_level,
+                total_actions: 0, // TODO: Track snap actions
+            },
+            firefox: BrowserStats {
+                enabled: self.firefox_enabled,
+                freeze_threshold: self.firefox_cpu_threshold_freeze,
+                kill_threshold: self.firefox_cpu_threshold_kill,
+                freeze_violations: self.firefox_violations_freeze,
+                kill_violations: self.firefox_violations_kill,
+                max_violations_freeze: self.firefox_max_violations_freeze,
+                max_violations_kill: self.firefox_max_violations_kill,
+                total_freezes: 0, // TODO: Track freezes
+                total_kills: 0,   // TODO: Track kills
+            },
+            brave: BrowserStats {
+                enabled: self.brave_enabled,
+                freeze_threshold: self.brave_cpu_threshold_freeze,
+                kill_threshold: self.brave_cpu_threshold_kill,
+                freeze_violations: self.brave_violations_freeze,
+                kill_violations: self.brave_violations_kill,
+                max_violations_freeze: self.brave_max_violations_freeze,
+                max_violations_kill: self.brave_max_violations_kill,
+                total_freezes: 0, // TODO: Track freezes
+                total_kills: 0,   // TODO: Track kills
+            },
+            telegram: BrowserStats {
+                enabled: self.telegram_enabled,
+                freeze_threshold: self.telegram_cpu_threshold_freeze,
+                kill_threshold: self.telegram_cpu_threshold_kill,
+                freeze_violations: self.telegram_violations_freeze,
+                kill_violations: self.telegram_violations_kill,
+                max_violations_freeze: self.telegram_max_violations_freeze,
+                max_violations_kill: self.telegram_max_violations_kill,
+                total_freezes: 0, // TODO: Track freezes
+                total_kills: 0,   // TODO: Track kills
+            },
+            memory_pressure: MemoryPressureStats {
+                enabled: self.memory_pressure_enabled,
+                some_avg10: mp_some,
+                full_avg10: mp_full,
+                status: mp_status,
+                warning_count: self.memory_pressure_warning_count,
+                critical_count: self.memory_pressure_critical_count,
+                some_threshold_warning: self.memory_pressure_some_threshold_warning,
+                some_threshold_critical: self.memory_pressure_some_threshold_critical,
+                full_threshold_warning: self.memory_pressure_full_threshold_warning,
+                full_threshold_critical: self.memory_pressure_full_threshold_critical,
+                action_warning: self.memory_pressure_action_warning.clone(),
+                action_critical: self.memory_pressure_action_critical.clone(),
+            },
+            system_health: SystemHealth {
+                load_1min: load_1,
+                load_5min: load_5,
+                load_15min: load_15,
+                memory_used_percent: mem_used_pct,
+                memory_total_mb: mem_total,
+                memory_available_mb: mem_available,
+            },
+            log_stats,
+        }
+    }
+
     /// Monitor memory pressure (PSI - Pressure Stall Information)
     ///
     /// Reads /proc/pressure/memory and takes proactive actions based on thresholds

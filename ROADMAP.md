@@ -311,6 +311,29 @@ FreezR уже является функциональным production-ready и�
 
 ## 📝 Changelog
 
+### 2025-10-26: Live Dashboard with Service/Viewer Separation ✅
+- **Read-Only Dashboard Viewer**: Separate dashboard subcommand for live monitoring
+  - `process-monitor dashboard` - Read-only stats viewer
+  - Reads from shared JSON file (/tmp/freezr-stats.json)
+  - Configurable update interval (--interval flag)
+  - No conflicts with running service
+  - Full dashboard UI with all stats sections
+- **Stats Export System**: Complete statistics sharing architecture
+  - Service exports stats to JSON file every check cycle
+  - Dashboard reads and displays stats in real-time
+  - Clean separation: service writes, dashboard reads
+  - Stats include: KESL, Node, Snap, Firefox, Brave, Telegram, Memory Pressure, System Health, Logs
+- **Parallel Operation**: Service + Dashboard work together
+  - Service runs in background (systemd or manual)
+  - Dashboard can be launched separately for viewing
+  - Multiple dashboard instances supported (all read-only)
+  - No process conflicts or duplicate monitoring
+- **Architecture Benefits**:
+  - Clean separation of concerns (monitoring vs. viewing)
+  - Lightweight dashboard (no monitoring overhead)
+  - Flexible deployment (service always runs, dashboard on-demand)
+  - Easy to add more viewers (web UI, mobile app, etc.)
+
 ### 2025-10-26: Systemd Service Integration ✅
 - **Native Rust Implementation**: Complete systemd service management in Rust
   - CLI subcommands: install-service, uninstall-service, service-status
@@ -363,6 +386,6 @@ FreezR уже является функциональным production-ready и�
 
 ---
 
-**Last Updated**: 2025-10-26
+**Last Updated**: 2025-10-26 (Live Dashboard Implementation)
 **Status**: Active Development
 **License**: MIT / Apache 2.0

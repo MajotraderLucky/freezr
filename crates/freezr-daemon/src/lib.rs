@@ -4,6 +4,8 @@
 
 pub mod config;
 pub mod monitor;
+pub mod stats;
 
 pub use config::Config;
 pub use monitor::ResourceMonitor;
+pub use stats::MonitorStats;
