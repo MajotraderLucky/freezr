@@ -123,9 +123,10 @@ impl ProcessExecutor {
     ///
     /// Nice values: -20 (highest priority) to 19 (lowest priority)
     /// Higher nice = lower priority
+    ///
+    /// Uses libc setpriority() directly instead of sudo renice command
+    /// Requires CAP_SYS_NICE capability (configured in systemd service)
     pub fn renice_process(pid: u32, nice_level: i32) -> Result<()> {
-        use std::process::Command;
-
         if !Self::process_exists(pid)? {
             return Err(Error::Executor(format!(
                 "Process {} does not exist",
@@ -141,21 +142,17 @@ impl ProcessExecutor {
             )));
         }
 
-        // Use renice command to change priority
-        let output = Command::new("sudo")
-            .arg("renice")
-            .arg("-n")
-            .arg(nice_level.to_string())
-            .arg("-p")
-            .arg(pid.to_string())
-            .output()
-            .map_err(|e| Error::Executor(format!("Failed to run renice: {}", e)))?;
+        // Use direct libc setpriority() syscall
+        // PRIO_PROCESS = 0, pid, nice_level
+        let result = unsafe {
+            libc::setpriority(libc::PRIO_PROCESS, pid as libc::id_t, nice_level as libc::c_int)
+        };
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+        if result == -1 {
+            let errno = std::io::Error::last_os_error();
             return Err(Error::Executor(format!(
-                "Failed to renice process {}: {}",
-                pid, stderr
+                "Failed to set priority for process {}: {}",
+                pid, errno
             )));
         }
 

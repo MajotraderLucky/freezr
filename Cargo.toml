@@ -59,6 +59,12 @@ humantime = "2.1"
 byte-unit = "5.1"
 regex = "1.10"
 
+# Systemd D-Bus integration
+zbus = "4.0"
+
+# Low-level system calls
+libc = "0.2"
+
 # Optional: ML features
 #candle-core = { version = "0.3", optional = true }
 #candle-nn = { version = "0.3", optional = true }

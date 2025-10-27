@@ -1,6 +1,6 @@
 use crate::{Error, Result};
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+use zbus::{blocking::Connection, zvariant::OwnedObjectPath};
 
 pub struct SystemdService {
     service_name: String,
@@ -40,51 +40,100 @@ impl SystemdService {
         time_since_last >= self.min_restart_interval
     }
 
-    /// Execute systemd daemon-reload
-    fn daemon_reload(&self) -> Result<()> {
-        let output = Command::new("sudo")
-            .arg("systemctl")
-            .arg("daemon-reload")
-            .output()
-            .map_err(|e| Error::Systemd(format!("Failed to execute daemon-reload: {}", e)))?;
+    /// Get systemd Manager proxy via D-Bus
+    fn get_manager_proxy() -> Result<zbus::blocking::Proxy<'static>> {
+        let connection = Connection::system()
+            .map_err(|e| Error::Systemd(format!("Failed to connect to system bus: {}", e)))?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::Systemd(format!("daemon-reload failed: {}", stderr)));
-        }
+        let proxy = zbus::blocking::Proxy::new(
+            &connection,
+            "org.freedesktop.systemd1",
+            "/org/freedesktop/systemd1",
+            "org.freedesktop.systemd1.Manager",
+        )
+        .map_err(|e| Error::Systemd(format!("Failed to create Manager proxy: {}", e)))?;
+
+        Ok(proxy)
+    }
+
+    /// Execute systemd daemon-reload via D-Bus
+    fn daemon_reload(&self) -> Result<()> {
+        let proxy = Self::get_manager_proxy()?;
+
+        proxy
+            .call_method("Reload", &())
+            .map_err(|e| Error::Systemd(format!("daemon-reload failed: {}", e)))?;
 
         Ok(())
     }
 
-    /// Restart the systemd service
+    /// Restart the systemd service via D-Bus
     fn restart_service(&self) -> Result<()> {
-        let output = Command::new("sudo")
-            .arg("systemctl")
-            .arg("restart")
-            .arg(&self.service_name)
-            .output()
-            .map_err(|e| Error::Systemd(format!("Failed to execute restart: {}", e)))?;
+        let proxy = Self::get_manager_proxy()?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::Systemd(format!(
-                "restart {} failed: {}",
-                self.service_name, stderr
-            )));
-        }
+        // Convert service name to systemd unit (e.g., "kesl" -> "kesl.service")
+        let unit_name = if self.service_name.ends_with(".service") {
+            self.service_name.clone()
+        } else {
+            format!("{}.service", self.service_name)
+        };
+
+        // Call RestartUnit method
+        // Mode "replace" means: replace any conflicting job
+        let _job_path: OwnedObjectPath = proxy
+            .call_method("RestartUnit", &(unit_name.as_str(), "replace"))
+            .map_err(|e| {
+                Error::Systemd(format!("restart {} failed: {}", self.service_name, e))
+            })?
+            .body()
+            .deserialize()
+            .map_err(|e| {
+                Error::Systemd(format!(
+                    "Failed to deserialize restart response: {}",
+                    e
+                ))
+            })?;
 
         Ok(())
     }
 
     /// Проверить, активна ли служба
     pub fn is_active(&self) -> Result<bool> {
-        let output = Command::new("systemctl")
-            .arg("is-active")
-            .arg(&self.service_name)
-            .output()
-            .map_err(|e| Error::Systemd(format!("Failed to check service status: {}", e)))?;
+        let proxy = Self::get_manager_proxy()?;
 
-        Ok(output.status.success())
+        // Convert service name to systemd unit
+        let unit_name = if self.service_name.ends_with(".service") {
+            self.service_name.clone()
+        } else {
+            format!("{}.service", self.service_name)
+        };
+
+        // Get unit object path
+        let unit_path: OwnedObjectPath = proxy
+            .call_method("GetUnit", &(unit_name.as_str(),))
+            .map_err(|e| Error::Systemd(format!("Failed to get unit: {}", e)))?
+            .body()
+            .deserialize()
+            .map_err(|e| Error::Systemd(format!("Failed to deserialize unit path: {}", e)))?;
+
+        // Create proxy for the unit
+        let connection = Connection::system()
+            .map_err(|e| Error::Systemd(format!("Failed to connect to system bus: {}", e)))?;
+
+        let unit_proxy = zbus::blocking::Proxy::new(
+            &connection,
+            "org.freedesktop.systemd1",
+            unit_path.as_str(),
+            "org.freedesktop.systemd1.Unit",
+        )
+        .map_err(|e| Error::Systemd(format!("Failed to create Unit proxy: {}", e)))?;
+
+        // Get ActiveState property
+        let active_state: String = unit_proxy
+            .get_property("ActiveState")
+            .map_err(|e| Error::Systemd(format!("Failed to get ActiveState: {}", e)))?;
+
+        Ok(active_state == "active")
     }
 
     /// Полный перезапуск с daemon-reload
@@ -113,22 +162,54 @@ impl SystemdService {
 
     /// Получить свойства службы (CPUQuota, MemoryMax, Nice)
     pub fn get_properties(&self) -> Result<String> {
-        let output = Command::new("systemctl")
-            .arg("show")
-            .arg(&self.service_name)
-            .arg("--property=CPUQuota,MemoryMax,Nice")
-            .output()
-            .map_err(|e| Error::Systemd(format!("Failed to get properties: {}", e)))?;
+        let proxy = Self::get_manager_proxy()?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::Systemd(format!(
-                "Failed to get properties: {}",
-                stderr
-            )));
+        // Convert service name to systemd unit
+        let unit_name = if self.service_name.ends_with(".service") {
+            self.service_name.clone()
+        } else {
+            format!("{}.service", self.service_name)
+        };
+
+        // Get unit object path
+        let unit_path: OwnedObjectPath = proxy
+            .call_method("GetUnit", &(unit_name.as_str(),))
+            .map_err(|e| Error::Systemd(format!("Failed to get unit: {}", e)))?
+            .body()
+            .deserialize()
+            .map_err(|e| Error::Systemd(format!("Failed to deserialize unit path: {}", e)))?;
+
+        // Create proxy for the unit
+        let connection = Connection::system()
+            .map_err(|e| Error::Systemd(format!("Failed to connect to system bus: {}", e)))?;
+
+        let unit_proxy = zbus::blocking::Proxy::new(
+            &connection,
+            "org.freedesktop.systemd1",
+            unit_path.as_str(),
+            "org.freedesktop.systemd1.Service",
+        )
+        .map_err(|e| Error::Systemd(format!("Failed to create Service proxy: {}", e)))?;
+
+        // Get properties
+        let mut result = String::new();
+
+        // CPUQuotaPerSecUSec
+        if let Ok(cpu_quota) = unit_proxy.get_property::<u64>("CPUQuotaPerSecUSec") {
+            result.push_str(&format!("CPUQuota={}\n", cpu_quota));
         }
 
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        // MemoryMax
+        if let Ok(memory_max) = unit_proxy.get_property::<u64>("MemoryMax") {
+            result.push_str(&format!("MemoryMax={}\n", memory_max));
+        }
+
+        // Nice
+        if let Ok(nice) = unit_proxy.get_property::<i32>("Nice") {
+            result.push_str(&format!("Nice={}\n", nice));
+        }
+
+        Ok(result)
     }
 
     /// Время с последнего рестарта (в секундах)
