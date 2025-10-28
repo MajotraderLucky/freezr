@@ -299,6 +299,47 @@ impl ProcessScanner {
         Ok(pids)
     }
 
+    /// Найти все Neovim процессы
+    pub fn scan_nvim_processes(&self) -> Result<Vec<ProcessInfo>> {
+        let pids = self.find_nvim_pids()?;
+        let mut processes = Vec::new();
+
+        for pid in pids {
+            let cpu = self.measure_cpu_top(pid)?;
+            let memory_kb = self.get_memory_kb(pid)?;
+            let (name, command) = self.get_process_info(pid)?;
+            processes.push(ProcessInfo::new(pid, name, command, cpu, memory_kb));
+        }
+
+        Ok(processes)
+    }
+
+    /// Найти все PID процессов Neovim
+    fn find_nvim_pids(&self) -> Result<Vec<u32>> {
+        let output = Command::new("ps")
+            .args(&["aux"])
+            .output()
+            .map_err(|e| Error::Scanner(format!("Failed to run ps: {}", e)))?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut pids = Vec::new();
+
+        for line in stdout.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() > 10 {
+                let cmd = parts[10];
+                // Ищем nvim в команде (может быть nvim, /usr/bin/nvim, /path/to/nvim)
+                if cmd.contains("nvim") && !line.contains("grep") {
+                    if let Ok(pid) = parts[1].parse::<u32>() {
+                        pids.push(pid);
+                    }
+                }
+            }
+        }
+
+        Ok(pids)
+    }
+
     /// Измерить CPU через top (3 замера с усреднением)
     fn measure_cpu_average(&self, pid: u32, samples: usize) -> Result<f64> {
         let mut sum = 0.0;

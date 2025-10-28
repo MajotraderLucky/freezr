@@ -1285,13 +1285,30 @@ impl ResourceMonitor {
             self.memory_pressure_full_threshold_critical,
         ) {
             self.memory_pressure_critical_count += 1;
+            warn!("╔═══════════════════════════════════════════════════════════╗");
+            warn!("║           🚨 CRITICAL MEMORY PRESSURE DETECTED 🚨         ║");
+            warn!("╚═══════════════════════════════════════════════════════════╝");
             warn!(
-                "CRITICAL memory pressure detected! some={:.2}%, full={:.2}% (thresholds: some={:.1}%, full={:.1}%)",
+                "PSI Metrics: some={:.2}%, full={:.2}% (thresholds: some={:.1}%, full={:.1}%)",
                 pressure.some_avg10,
                 pressure.full_avg10,
                 self.memory_pressure_some_threshold_critical,
                 self.memory_pressure_full_threshold_critical
             );
+            warn!(
+                "PSI Averages: some(10s/60s/300s)={:.2}/{:.2}/{:.2}%, full(10s/60s/300s)={:.2}/{:.2}/{:.2}%",
+                pressure.some_avg10, pressure.some_avg60, pressure.some_avg300,
+                pressure.full_avg10, pressure.full_avg60, pressure.full_avg300
+            );
+
+            // Get system memory info
+            if let Ok(meminfo) = std::fs::read_to_string("/proc/meminfo") {
+                if let Some(total) = meminfo.lines().find(|l| l.starts_with("MemTotal:")) {
+                    if let Some(avail) = meminfo.lines().find(|l| l.starts_with("MemAvailable:")) {
+                        warn!("System Memory: {} | {}", total.trim(), avail.trim());
+                    }
+                }
+            }
 
             // Execute critical action
             self.execute_memory_pressure_action(&self.memory_pressure_action_critical.clone(), "CRITICAL")?;
@@ -1462,40 +1479,113 @@ impl ResourceMonitor {
     }
 
     /// Kill non-critical processes (most aggressive action)
+    /// Priority: Brave → Telegram → nvim (>1GB)
     fn kill_non_critical_processes(&mut self) -> Result<()> {
         let mut killed_count = 0;
+        let mut total_memory_freed = 0u64;
 
-        // Kill Firefox
+        // Log all potential culprits before killing
+        warn!("=== OOM Prevention: Analyzing memory consumers ===");
+
+        // Collect all processes and their memory usage
+        let mut all_consumers: Vec<(String, u32, u64, f64, String)> = Vec::new();
+
+        if let Ok(processes) = self.scanner.scan_brave_processes() {
+            for p in processes {
+                all_consumers.push(("Brave".to_string(), p.pid, p.memory_kb, p.cpu_percent, p.command.clone()));
+            }
+        }
+        if let Ok(processes) = self.scanner.scan_telegram_processes() {
+            for p in processes {
+                all_consumers.push(("Telegram".to_string(), p.pid, p.memory_kb, p.cpu_percent, p.command.clone()));
+            }
+        }
+        if let Ok(processes) = self.scanner.scan_nvim_processes() {
+            for p in processes {
+                all_consumers.push(("nvim".to_string(), p.pid, p.memory_kb, p.cpu_percent, p.command.clone()));
+            }
+        }
         if let Ok(processes) = self.scanner.scan_firefox_processes() {
-            for process in processes {
-                warn!("Killing Firefox process {} due to critical memory pressure", process.pid);
-                if let Ok(()) = ProcessExecutor::kill_process(process.pid) {
-                    killed_count += 1;
-                }
+            for p in processes {
+                all_consumers.push(("Firefox".to_string(), p.pid, p.memory_kb, p.cpu_percent, p.command.clone()));
             }
         }
 
-        // Kill Brave
+        // Sort by memory consumption (descending)
+        all_consumers.sort_by(|a, b| b.2.cmp(&a.2));
+
+        // Log top memory consumers
+        warn!("Top memory consumers before OOM prevention:");
+        for (idx, (name, pid, mem_kb, cpu, cmd)) in all_consumers.iter().take(10).enumerate() {
+            let mem_mb = mem_kb / 1024;
+            let cmd_short: String = cmd.chars().take(60).collect();
+            warn!("  #{} {} PID:{} RAM:{}MB CPU:{:.1}% CMD:{}",
+                  idx + 1, name, pid, mem_mb, cpu, cmd_short);
+        }
+
+        // Priority 1: Kill Brave (браузер можно пожертвовать)
         if let Ok(processes) = self.scanner.scan_brave_processes() {
             for process in processes {
-                warn!("Killing Brave process {} due to critical memory pressure", process.pid);
+                let mem_mb = process.memory_kb / 1024;
+                warn!("🔴 [Priority 1] Killing Brave PID:{} RAM:{}MB CPU:{:.1}% CMD:{}",
+                      process.pid, mem_mb, process.cpu_percent,
+                      process.command.chars().take(60).collect::<String>());
                 if let Ok(()) = ProcessExecutor::kill_process(process.pid) {
                     killed_count += 1;
+                    total_memory_freed += process.memory_kb;
                 }
             }
         }
 
-        // Kill Telegram
+        // Priority 2: Kill Telegram (мессенджер менее критичен)
         if let Ok(processes) = self.scanner.scan_telegram_processes() {
             for process in processes {
-                warn!("Killing Telegram process {} due to critical memory pressure", process.pid);
+                let mem_mb = process.memory_kb / 1024;
+                warn!("🟠 [Priority 2] Killing Telegram PID:{} RAM:{}MB CPU:{:.1}% CMD:{}",
+                      process.pid, mem_mb, process.cpu_percent,
+                      process.command.chars().take(60).collect::<String>());
                 if let Ok(()) = ProcessExecutor::kill_process(process.pid) {
                     killed_count += 1;
+                    total_memory_freed += process.memory_kb;
                 }
             }
         }
 
-        warn!("Memory pressure: killed {} non-critical processes", killed_count);
+        // Priority 3: Kill nvim if memory > 1GB (крайняя мера)
+        if let Ok(processes) = self.scanner.scan_nvim_processes() {
+            for process in processes {
+                let memory_mb = process.memory_kb / 1024;
+                if memory_mb > 1024 {
+                    warn!("🟡 [Priority 3] Killing nvim PID:{} RAM:{}MB CPU:{:.1}% CMD:{}",
+                          process.pid, memory_mb, process.cpu_percent,
+                          process.command.chars().take(60).collect::<String>());
+                    if let Ok(()) = ProcessExecutor::kill_process(process.pid) {
+                        killed_count += 1;
+                        total_memory_freed += process.memory_kb;
+                    }
+                } else {
+                    info!("⚪ Skipping nvim PID:{} ({}MB < 1GB threshold)", process.pid, memory_mb);
+                }
+            }
+        }
+
+        // Priority 4: Kill Firefox (дополнительная защита)
+        if let Ok(processes) = self.scanner.scan_firefox_processes() {
+            for process in processes {
+                let mem_mb = process.memory_kb / 1024;
+                warn!("🔵 [Priority 4] Killing Firefox PID:{} RAM:{}MB CPU:{:.1}% CMD:{}",
+                      process.pid, mem_mb, process.cpu_percent,
+                      process.command.chars().take(60).collect::<String>());
+                if let Ok(()) = ProcessExecutor::kill_process(process.pid) {
+                    killed_count += 1;
+                    total_memory_freed += process.memory_kb;
+                }
+            }
+        }
+
+        let freed_mb = total_memory_freed / 1024;
+        warn!("=== OOM Prevention completed: killed {} processes, freed {}MB ===",
+              killed_count, freed_mb);
         Ok(())
     }
 

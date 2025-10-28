@@ -183,7 +183,10 @@ freezr export --format json --output report.json
 - ✅ **Periodic Reporting** - Automated detailed reports at configurable intervals
 - ✅ **System Health Monitoring** - Load average, memory usage snapshots
 - ✅ **Professional Logging** - Daily rotation, startup banner, structured logs
-- ✅ **Multi-Process Support** - KESL, Node.js, and **Snap/snapd** monitoring
+- ✅ **Multi-Process Support** - KESL, Node.js, Snap/snapd, Firefox, Brave, Telegram, **nvim**
+- 🆕 **OOM Prevention** - PSI-based proactive memory pressure management
+- 🆕 **Priority-Based Killing** - Intelligent process termination order (Brave → Telegram → nvim)
+- 🆕 **Detailed OOM Logging** - Complete forensics with PID, RAM, CPU, and command for analysis
 
 ### Quick Start
 
@@ -259,6 +262,114 @@ source ~/.bashrc
 - 📋 **[User Guide](docs/user-guide/README.md)** - Getting started, usage, troubleshooting
 - 🔧 **[Technical Docs](docs/technical/README.md)** - Systemd, Memory Pressure, Snap monitoring, Logs
 - 👨‍💻 **[Development Docs](docs/development/README.md)** - Architecture, contributing, ML roadmap
+
+---
+
+## 🛡️ OOM Prevention System
+
+### How FreezR Prevents System OOM
+
+FreezR uses **PSI (Pressure Stall Information)** to detect memory pressure **before** the system runs out of memory.
+
+**Key Mechanism:**
+```
+/proc/pressure/memory → PSI metrics → FreezR detection → Proactive killing → OOM prevented
+```
+
+**PSI Metrics:**
+- `some avg10` - % time at least one process waits for memory (last 10s)
+- `full avg10` - % time ALL processes wait for memory (last 10s)
+
+**Timeline:**
+```
+0% → 10% → 30% → 15% full → 50% → 80% → 100% OOM!
+      ↑      ↑      ↑
+   Normal Warning Critical
+                    └─ FreezR kills here (15% full)
+```
+
+**Configuration** (`freezr.toml`):
+```toml
+[memory_pressure]
+enabled = true
+some_threshold_warning = 10.0   # Warning at 10%
+some_threshold_critical = 30.0  # Critical at 30%
+full_threshold_warning = 5.0    # Warning at 5%
+full_threshold_critical = 15.0  # Kill processes at 15%
+action_warning = "log"
+action_critical = "kill"
+check_interval_secs = 5
+```
+
+### Priority-Based Process Termination
+
+When critical memory pressure is detected, FreezR kills processes in this order:
+
+1. **🔴 Priority 1: Brave** - Browser tabs (1-2GB freed)
+2. **🟠 Priority 2: Telegram** - Messenger (300-500MB freed)
+3. **🟡 Priority 3: Neovim** - Only if >1GB memory (1-2GB freed)
+4. **🔵 Priority 4: Firefox** - Additional protection
+
+**Configuration** (`freezr.toml`):
+```toml
+[nvim]
+# Kill only when memory > 1GB during critical memory pressure
+memory_threshold_mb = 1024
+enabled = true
+```
+
+### Detailed OOM Event Logging
+
+FreezR logs complete forensics for every OOM event:
+
+**Example Log:**
+```
+╔═══════════════════════════════════════════════════════════╗
+║           🚨 CRITICAL MEMORY PRESSURE DETECTED 🚨         ║
+╚═══════════════════════════════════════════════════════════╝
+PSI Metrics: some=35.20%, full=18.50% (thresholds: some=30.0%, full=15.0%)
+PSI Averages: some(10s/60s/300s)=35.20/28.40/22.10%, full(10s/60s/300s)=18.50/12.30/8.70%
+System Memory: MemTotal: 16314828 kB | MemAvailable: 1245680 kB
+
+=== OOM Prevention: Analyzing memory consumers ===
+Top memory consumers before OOM prevention:
+  #1 nvim PID:6161 RAM:2345MB CPU:15.3% CMD:/usr/bin/nvim /home/user/large_file.log
+  #2 Brave PID:88478 RAM:1856MB CPU:3.0% CMD:/snap/brave/561/opt/brave.com/brave/brave
+  #3 Telegram PID:90700 RAM:312MB CPU:1.8% CMD:/usr/bin/telegram-desktop
+
+🔴 [Priority 1] Killing Brave PID:88478 RAM:1856MB CPU:3.0%
+🟠 [Priority 2] Killing Telegram PID:90700 RAM:312MB CPU:1.8%
+🟡 [Priority 3] Killing nvim PID:6161 RAM:2345MB CPU:15.3%
+
+=== OOM Prevention completed: killed 3 processes, freed 4513MB ===
+```
+
+**What's Logged:**
+- ✅ Current PSI metrics (10s/60s/300s averages)
+- ✅ System memory state (MemTotal/MemAvailable)
+- ✅ Top 10 memory consumers (sorted by RAM usage)
+- ✅ Each process: Type, PID, RAM, CPU%, full command
+- ✅ Kill priority with emoji markers
+- ✅ Total processes killed and memory freed
+
+**Viewing Logs:**
+```bash
+# Real-time monitoring
+journalctl --user -u freezr.service -f
+
+# Find OOM events
+journalctl --user -u freezr.service | grep -A 30 "CRITICAL MEMORY PRESSURE"
+
+# File logs (if configured)
+tail -f ~/.myBashScripts/freezr/logs/actions.log
+```
+
+**Pattern Analysis:**
+Use logs to:
+1. Identify main memory culprits
+2. Adjust per-process thresholds
+3. Track PSI trends (10s vs 60s vs 300s)
+4. Fine-tune killing priorities
 
 ---
 
